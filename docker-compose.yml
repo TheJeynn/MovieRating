@@ -1,0 +1,23 @@
+version: '3.4'
+
+services:
+  db:
+    image: mcr.microsoft.com/mssql/server:2022-latest
+    environment:
+      - ACCEPT_EULA=Y
+      - SA_PASSWORD=${DB_PASSWORD}
+    ports:
+      - "1433:1433"
+
+  api:
+    image: movierating-api
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "5000:80"
+    environment:
+      - ConnectionStrings__DefaultConnection=Server=db;Database=MovieDb;User Id=sa;Password=${DB_PASSWORD};TrustServerCertificate=True
+      - TmdbSettings__ApiKey=${TMDB_KEY}
+    depends_on:
+      - db
