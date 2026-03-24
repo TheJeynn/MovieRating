@@ -16,16 +16,40 @@ namespace MovieRating.Controllers
             _context = context;
         }
         [HttpPost]
-        public async Task<ActionResult<Rating>> AddRating(Rating rating)
+        public async Task<ActionResult<Rating>> PostRating(Rating rating, [FromServices] IHttpClientFactory clientFactory, [FromServices] IConfiguration config)
         {
+            var client = clientFactory.CreateClient("TmdbClient");
+            var apiKey = config["TMDB_KEY"];
+
+            var response = await client.GetAsync($"https://api.themoviedb.org/3/movie/{rating.TmdbId}?api_key={apiKey}&language=tr-TR");
+
+            if (response.IsSuccessStatusCode)
+            {
+                var movieData = await response.Content.ReadFromJsonAsync<TmdbMovieResponse>();
+                if (movieData != null)
+                {
+
+                    rating.MovieTitle = movieData.Title;
+                }
+            }
+
             _context.Ratings.Add(rating);
             await _context.SaveChangesAsync();
-            return Ok(rating);
+
+            return CreatedAtAction("GetRating", new { id = rating.Id }, rating);
         }
-        [HttpGet]
-        public async Task<ActionResult<IEnumerable<Rating>>> GetAllRatings()
+
+        [HttpGet("{id}")]
+        public async Task<ActionResult<Rating>> GetRating(int id)
         {
-            return await _context.Ratings.ToListAsync();
+            var rating = await _context.Ratings.FindAsync(id);
+
+            if (rating == null)
+            {
+                return NotFound();
+            }
+
+            return rating;
         }
     }
 }

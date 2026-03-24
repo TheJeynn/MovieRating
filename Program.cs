@@ -35,7 +35,6 @@ using (var scope = app.Services.CreateScope())
     try
     {
         var context = services.GetRequiredService<AppDbContext>();
-        // Applies any pending migrations and creates the database if it doesn't exist
         context.Database.Migrate();
         Console.WriteLine("--> Database migration applied successfully.");
     }

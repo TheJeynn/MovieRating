@@ -4,9 +4,9 @@
     {
         public int Id { get; set; }
         public int TmdbId { get; set; }
-        public string ContentType { get; set; }
-        public double UserScore { get; set; }
-        public string Comment { get; set; }
-        public DateTime CreatedAt { get; set; } = DateTime.Now;
+        public int Score { get; set; }
+
+        public string MovieTitle { get; set; } = string.Empty;
+        public string? PosterPath { get; set; }
     }
 }
