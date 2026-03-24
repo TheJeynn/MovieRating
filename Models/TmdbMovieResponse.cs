@@ -1,11 +1,13 @@
-﻿
+﻿using System.Text.Json.Serialization;
 
 namespace MovieRating.Models
 {
     public class TmdbMovieResponse
     {
+        [JsonPropertyName("title")]
         public string Title { get; set; } = string.Empty;
-        public string Overview { get; set; } = string.Empty;
-        public string? Poster_Path { get; set; }
+
+        [JsonPropertyName("poster_path")]
+        public string? PosterPath { get; set; }
     }
 }

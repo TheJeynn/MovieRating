@@ -1,7 +1,6 @@
 .env
-appsettings.json
+
 appsettings.Development.json
-*.usersecrets
 
 bin/
 obj/
@@ -11,9 +10,7 @@ obj/
 *.suo
 *.userosscache
 *.sln.docstates
-
 .db_data/
 docker-compose.override.yml
-
-.DS_Store (Mac kullanıyorsan)
-Thumbs.db (Windows görsel önbelleği)
+.DS_Store
+Thumbs.db

@@ -1,0 +1,39 @@
+﻿<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MovieRating - Discovery</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+    <div class="main-wrapper">
+
+        <main class="platform">
+
+            <header class="top-bar">
+                <div class="filters">
+                    <button class="filter-btn active">All</button>
+                    <button class="filter-btn">Action</button>
+                    <button class="filter-btn">Drama</button>
+                    <button class="filter-btn">Sci-Fi</button>
+                </div>
+
+                <div class="search-wrapper">
+                    <input type="text" id="searchInput" placeholder="Search movies...">
+                    <span class="search-icon">🔍</span>
+                </div>
+            </header>
+
+            <h1 class="main-title">Trending Today: Movies & TV Shows</h1>
+            <div class="movie-grid" id="movieGrid">
+                <div class="loading">Loading movies...</div>
+            </div>
+
+        </main>
+    </div>
+
+    <script src="script.js"></script>
+</body>
+</html>

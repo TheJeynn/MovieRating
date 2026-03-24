@@ -2,7 +2,6 @@
 using MovieRating.DTOs;
 using System.Net.Http.Json;
 
-
 namespace MovieRating.Controllers
 {
     [ApiController]
@@ -10,20 +9,27 @@ namespace MovieRating.Controllers
     public class MoviesController : ControllerBase
     {
         private readonly IHttpClientFactory _httpClientFactory;
-        private readonly string _apiKey;
+        private readonly string _tmdbToken;
+
         public MoviesController(IHttpClientFactory httpClientFactory)
         {
             _httpClientFactory = httpClientFactory;
+            _tmdbToken = Environment.GetEnvironmentVariable("TMDB_KEY") ?? string.Empty;
         }
 
         [HttpGet("list/{type}")]
         public async Task<IActionResult> GetMoviesOrSeries(string type, [FromQuery] int? genreId)
         {
+            if (string.IsNullOrEmpty(_tmdbToken))
+                return BadRequest("TMDB_KEY not found in environment.");
+
             var client = _httpClientFactory.CreateClient("TmdbClient");
+            client.DefaultRequestHeaders.Authorization =
+                new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", _tmdbToken);
 
             string requestUrl = genreId.HasValue
-                ? $"discover/{type}?api_key={_apiKey}&with_genres={genreId}&language=tr-TR"
-                : $"{type}/popular?api_key={_apiKey}&language=tr-TR";
+                ? $"discover/{type}?with_genres={genreId}&language=tr-TR"
+                : $"{type}/popular?language=tr-TR";
 
             try
             {
@@ -38,16 +44,20 @@ namespace MovieRating.Controllers
             {
                 return BadRequest($"Hata oluştu: {ex.Message}");
             }
-
         }
 
         [HttpGet("genres/{type}")]
         public async Task<IActionResult> GetGenres(string type)
         {
+            if (string.IsNullOrEmpty(_tmdbToken))
+                return BadRequest("TMDB_KEY not found in environment.");
+
             var client = _httpClientFactory.CreateClient("TmdbClient");
+            client.DefaultRequestHeaders.Authorization =
+                new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", _tmdbToken);
 
             var response = await client.GetFromJsonAsync<GenreResponse>(
-                $"genre/{type}/list?api_key={_apiKey}&language=tr-TR");
+                $"genre/{type}/list?language=tr-TR");
 
             if (response == null) return NotFound("Kategoriler alınamadı.");
 
