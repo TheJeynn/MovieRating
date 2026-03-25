@@ -9,29 +9,55 @@
 <body>
 
     <div class="main-wrapper">
-
         <main class="platform">
 
             <header class="top-bar">
                 <div class="filters">
-                    <button class="filter-btn active">All</button>
-                    <button class="filter-btn">Action</button>
-                    <button class="filter-btn">Drama</button>
-                    <button class="filter-btn">Sci-Fi</button>
+                    <button class="filter-btn active" data-view="trending" onclick="switchView('trending')">🔥 Trending</button>
+                    <button class="filter-btn" data-view="rated" onclick="switchView('rated')">⭐ My Ratings</button>
                 </div>
-
                 <div class="search-wrapper">
                     <input type="text" id="searchInput" placeholder="Search movies...">
                     <span class="search-icon">🔍</span>
                 </div>
             </header>
 
-            <h1 class="main-title">Trending Today: Movies & TV Shows</h1>
+            <h1 class="main-title" id="pageTitle">Trending Today: Movies & TV Shows</h1>
             <div class="movie-grid" id="movieGrid">
-                <div class="loading">Loading movies...</div>
+                <div class="loading-spinner">Discovering Trends...</div>
             </div>
 
         </main>
+    </div>
+
+    <!-- Rating Modal -->
+    <div class="modal-overlay" id="modalOverlay" onclick="closeModal()">
+        <div class="modal" onclick="event.stopPropagation()">
+            <button class="modal-close" onclick="closeModal()">✕</button>
+            <img id="modalPoster" src="" alt="">
+            <div class="modal-info">
+                <h2 id="modalTitle"></h2>
+                <p id="modalType"></p>
+                <div class="star-rating">
+                    <span>Rate this:</span>
+                    <div class="stars" id="starContainer">
+                        <span class="star" data-value="1">★</span>
+                        <span class="star" data-value="2">★</span>
+                        <span class="star" data-value="3">★</span>
+                        <span class="star" data-value="4">★</span>
+                        <span class="star" data-value="5">★</span>
+                        <span class="star" data-value="6">★</span>
+                        <span class="star" data-value="7">★</span>
+                        <span class="star" data-value="8">★</span>
+                        <span class="star" data-value="9">★</span>
+                        <span class="star" data-value="10">★</span>
+                    </div>
+                    <span id="ratingLabel">Select a score</span>
+                </div>
+                <button class="submit-btn" id="submitRating" onclick="submitRating()">Save Rating</button>
+                <p class="modal-status" id="modalStatus"></p>
+            </div>
+        </div>
     </div>
 
     <script src="script.js"></script>
