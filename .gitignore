@@ -1,7 +1,8 @@
 .env
+.env.*
+!.env.example
 
-appsettings.Development.json
-
+# Visual Studio
 bin/
 obj/
 .vs/
@@ -10,7 +11,20 @@ obj/
 *.suo
 *.userosscache
 *.sln.docstates
+
+# Docker
 .db_data/
 docker-compose.override.yml
+
+# OS generated files
 .DS_Store
 Thumbs.db
+
+# User Secrets 
+**/secrets.json
+
+# Build results
+*.dll
+*.exe
+*.pdb
+*.nupkg

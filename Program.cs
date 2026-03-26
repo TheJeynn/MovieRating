@@ -18,6 +18,10 @@ if (File.Exists(dotenvPath))
 
 var builder = WebApplication.CreateBuilder(args);
 
+builder.Configuration
+    .AddUserSecrets<Program>()
+    .AddEnvironmentVariables();
+
 // --- STEP 2: SERVICES ---
 builder.Services.AddCors(options =>
 {
@@ -34,6 +38,10 @@ var connectionString = Environment.GetEnvironmentVariable("DB_CONNECTION")
 
 builder.Services.AddDbContext<AppDbContext>(options =>
     options.UseSqlServer(connectionString));
+
+var tmdbApiKey = builder.Configuration["TmdbSettings:ApiKey"];
+
+builder.Services.AddSingleton(tmdbApiKey ?? string.Empty);
 
 builder.Services.AddHttpClient("TmdbClient", client =>
 {

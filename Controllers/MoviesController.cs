@@ -11,17 +11,17 @@ namespace MovieRating.Controllers
         private readonly IHttpClientFactory _httpClientFactory;
         private readonly string _tmdbToken;
 
-        public MoviesController(IHttpClientFactory httpClientFactory)
+        public MoviesController(IHttpClientFactory httpClientFactory, string tmdbToken)
         {
             _httpClientFactory = httpClientFactory;
-            _tmdbToken = Environment.GetEnvironmentVariable("TMDB_KEY") ?? string.Empty;
+            _tmdbToken = tmdbToken ?? string.Empty;
         }
 
         [HttpGet("list/{type}")]
         public async Task<IActionResult> GetMoviesOrSeries(string type, [FromQuery] int? genreId)
         {
             if (string.IsNullOrEmpty(_tmdbToken))
-                return BadRequest("TMDB_KEY not found in environment.");
+                return BadRequest("TMDB API key is not configured. Please add it to User Secrets.");
 
             var client = _httpClientFactory.CreateClient("TmdbClient");
             client.DefaultRequestHeaders.Authorization =
@@ -36,13 +36,13 @@ namespace MovieRating.Controllers
                 var response = await client.GetFromJsonAsync<TmdbResponse>(requestUrl);
 
                 if (response == null || response.Results == null)
-                    return NotFound("İçerik bulunamadı.");
+                    return NotFound("Content not found.");
 
                 return Ok(response.Results);
             }
             catch (Exception ex)
             {
-                return BadRequest($"Hata oluştu: {ex.Message}");
+                return BadRequest($"Error occurred: {ex.Message}");
             }
         }
 
@@ -50,7 +50,7 @@ namespace MovieRating.Controllers
         public async Task<IActionResult> GetGenres(string type)
         {
             if (string.IsNullOrEmpty(_tmdbToken))
-                return BadRequest("TMDB_KEY not found in environment.");
+                return BadRequest("TMDB API key is not configured. Please add it to User Secrets.");
 
             var client = _httpClientFactory.CreateClient("TmdbClient");
             client.DefaultRequestHeaders.Authorization =
@@ -59,7 +59,7 @@ namespace MovieRating.Controllers
             var response = await client.GetFromJsonAsync<GenreResponse>(
                 $"genre/{type}/list?language=tr-TR");
 
-            if (response == null) return NotFound("Kategoriler alınamadı.");
+            if (response == null) return NotFound("Genres not found.");
 
             return Ok(response.Genres);
         }

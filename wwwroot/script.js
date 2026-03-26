@@ -175,7 +175,8 @@ async function submitRating() {
         tmdbId: currentItem.id,
         score: selectedScore,
         movieTitle: currentItem.title || currentItem.name || "Unknown",
-        posterPath: currentItem.poster_path || ""
+        posterPath: currentItem.poster_path || "",
+        mediaType: currentItem.media_type || "movie"   // tv veya movie bilgisi backend'e gidiyor
     };
 
     try {
