@@ -8,12 +8,12 @@ namespace MovieRating.DTOs
         public int Id { get; set; }
 
         [JsonPropertyName("name")]
-        public string Name { get; set; }
+        public string Name { get; set; } = string.Empty;
     }
 
     public class GenreResponse
     {
         [JsonPropertyName("genres")]
-        public List<GenreDto> Genres { get; set; }
+        public List<GenreDto>? Genres { get; set; }
     }
 }

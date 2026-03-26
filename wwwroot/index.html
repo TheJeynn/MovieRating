@@ -3,43 +3,108 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>MovieRating - Discovery</title>
+    <title>CineVault — Discover & Rate</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=DM+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="style.css">
 </head>
 <body>
 
-    <div class="main-wrapper">
-        <main class="platform">
+    <!-- ── NAVBAR ─────────────────────────────────────────── -->
+    <nav class="navbar">
+        <div class="nav-logo">CINE<span>VAULT</span></div>
+        <div class="nav-tabs">
+            <button class="nav-tab active" data-view="trending">🔥 Trending</button>
+            <button class="nav-tab" data-view="movies">🎬 Movies</button>
+            <button class="nav-tab" data-view="series">📺 Series</button>
+            <button class="nav-tab" data-view="toprated">⭐ Top Rated</button>
+            <button class="nav-tab" data-view="myratings">❤️ My Ratings</button>
+        </div>
+        <div class="nav-search">
+            <input type="text" id="searchInput" placeholder="Search movies, shows...">
+            <span class="search-icon">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8" /><path d="m21 21-4.35-4.35" /></svg>
+            </span>
+            <div class="search-dropdown" id="searchDropdown"></div>
+        </div>
+        <button class="nav-hamburger" id="hamburger">☰</button>
+    </nav>
 
-            <header class="top-bar">
-                <div class="filters">
-                    <button class="filter-btn active" data-view="trending" onclick="switchView('trending')">🔥 Trending</button>
-                    <button class="filter-btn" data-view="rated" onclick="switchView('rated')">⭐ My Ratings</button>
-                </div>
-                <div class="search-wrapper">
-                    <input type="text" id="searchInput" placeholder="Search movies...">
-                    <span class="search-icon">🔍</span>
-                </div>
-            </header>
-
-            <h1 class="main-title" id="pageTitle">Trending Today: Movies & TV Shows</h1>
-            <div class="movie-grid" id="movieGrid">
-                <div class="loading-spinner">Discovering Trends...</div>
-            </div>
-
-        </main>
+    <!-- ── MOBILE MENU ────────────────────────────────────── -->
+    <div class="mobile-menu" id="mobileMenu">
+        <button class="nav-tab active" data-view="trending">🔥 Trending</button>
+        <button class="nav-tab" data-view="movies">🎬 Movies</button>
+        <button class="nav-tab" data-view="series">📺 Series</button>
+        <button class="nav-tab" data-view="toprated">⭐ Top Rated</button>
+        <button class="nav-tab" data-view="myratings">❤️ My Ratings</button>
     </div>
 
-    <!-- Rating Modal -->
+    <!-- ── HERO ───────────────────────────────────────────── -->
+    <section class="hero" id="hero">
+        <div class="hero-bg" id="heroBg"></div>
+        <div class="hero-overlay"></div>
+        <div class="hero-content" id="heroContent">
+            <div class="hero-badge" id="heroBadge">TRENDING NOW</div>
+            <h1 class="hero-title" id="heroTitle">Loading...</h1>
+            <p class="hero-desc" id="heroDesc"></p>
+            <div class="hero-meta" id="heroMeta"></div>
+            <div class="hero-actions">
+                <button class="btn-primary" id="heroRateBtn">⭐ Rate This</button>
+                <button class="btn-secondary" id="heroInfoBtn" onclick="scrollToGrid()">See More ↓</button>
+            </div>
+        </div>
+        <div class="hero-dots" id="heroDots"></div>
+    </section>
+
+    <!-- ── MAIN CONTENT ───────────────────────────────────── -->
+    <main class="content">
+
+        <!-- Filter Bar -->
+        <div class="filter-bar" id="filterBar">
+            <div class="filter-left">
+                <h2 class="section-title" id="sectionTitle">Trending Today</h2>
+                <span class="result-count" id="resultCount"></span>
+            </div>
+            <div class="filter-right">
+                <div class="genre-filter" id="genreFilter"></div>
+                <select class="sort-select" id="sortSelect">
+                    <option value="default">Sort: Default</option>
+                    <option value="rating_high">Rating: High → Low</option>
+                    <option value="rating_low">Rating: Low → High</option>
+                    <option value="title_az">Title: A → Z</option>
+                </select>
+            </div>
+        </div>
+
+        <!-- Grid -->
+        <div class="movie-grid" id="movieGrid"></div>
+
+        <!-- Load More -->
+        <div class="load-more-wrap" id="loadMoreWrap">
+            <button class="btn-load-more" id="loadMoreBtn" onclick="loadMore()">Load More</button>
+        </div>
+
+    </main>
+
+    <!-- ── RATING MODAL ───────────────────────────────────── -->
     <div class="modal-overlay" id="modalOverlay" onclick="closeModal()">
         <div class="modal" onclick="event.stopPropagation()">
             <button class="modal-close" onclick="closeModal()">✕</button>
-            <img id="modalPoster" src="" alt="">
-            <div class="modal-info">
+            <div class="modal-poster-wrap">
+                <img id="modalPoster" src="" alt="">
+                <div class="modal-poster-overlay"></div>
+            </div>
+            <div class="modal-body">
+                <div class="modal-badge" id="modalBadge">MOVIE</div>
                 <h2 id="modalTitle"></h2>
-                <p id="modalType"></p>
-                <div class="star-rating">
-                    <span>Rate this:</span>
+                <p class="modal-year" id="modalYear"></p>
+                <p class="modal-overview" id="modalOverview"></p>
+                <div class="modal-tmdb">
+                    <span class="tmdb-score" id="modalTmdbScore"></span>
+                    <span class="tmdb-label">TMDB Score</span>
+                </div>
+                <div class="star-section">
+                    <p class="star-label">Your Rating</p>
                     <div class="stars" id="starContainer">
                         <span class="star" data-value="1">★</span>
                         <span class="star" data-value="2">★</span>
@@ -52,9 +117,9 @@
                         <span class="star" data-value="9">★</span>
                         <span class="star" data-value="10">★</span>
                     </div>
-                    <span id="ratingLabel">Select a score</span>
+                    <span class="star-score" id="ratingLabel">—</span>
                 </div>
-                <button class="submit-btn" id="submitRating" onclick="submitRating()">Save Rating</button>
+                <button class="btn-submit" id="submitRating" onclick="submitRating()">Save Rating</button>
                 <p class="modal-status" id="modalStatus"></p>
             </div>
         </div>
