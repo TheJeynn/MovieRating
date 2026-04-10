@@ -22,7 +22,15 @@ namespace MovieRating.Controllers
         [HttpGet]
         public async Task<ActionResult<IEnumerable<Rating>>> GetRatings()
         {
-            return await _context.Ratings.ToListAsync();
+            var ratings = await _context.Ratings
+                .OrderByDescending(r => r.RatedAt)
+                .ThenByDescending(r => r.Id)
+                .ToListAsync();
+
+            return ratings
+                .GroupBy(r => new { r.TmdbId, r.MediaType })
+                .Select(group => group.First())
+                .ToList();
         }
 
         // GET: api/Ratings/5
@@ -64,11 +72,13 @@ namespace MovieRating.Controllers
             if (string.IsNullOrEmpty(tmdbToken))
                 return BadRequest("TMDB_KEY not found in environment.");
 
+            bool isTv = string.Equals(rating.MediaType, "tv", StringComparison.OrdinalIgnoreCase);
+            rating.MediaType = isTv ? "tv" : "movie";
+
             var client = _clientFactory.CreateClient();
             client.DefaultRequestHeaders.Authorization =
                 new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", tmdbToken);
 
-            bool isTv = rating.MediaType?.ToLower() == "tv";
             string? movieTitle = null;
             string? posterPath = null;
 
@@ -113,7 +123,25 @@ namespace MovieRating.Controllers
 
             try
             {
-                _context.Ratings.Add(rating);
+                var existingRating = await _context.Ratings
+                    .Where(r => r.TmdbId == rating.TmdbId && r.MediaType == rating.MediaType)
+                    .OrderByDescending(r => r.RatedAt)
+                    .ThenByDescending(r => r.Id)
+                    .FirstOrDefaultAsync();
+
+                if (existingRating == null)
+                {
+                    _context.Ratings.Add(rating);
+                }
+                else
+                {
+                    existingRating.Score = rating.Score;
+                    existingRating.MovieTitle = rating.MovieTitle;
+                    existingRating.PosterPath = rating.PosterPath;
+                    existingRating.RatedAt = rating.RatedAt;
+                    rating = existingRating;
+                }
+
                 await _context.SaveChangesAsync();
             }
             catch (Exception ex)
@@ -121,7 +149,7 @@ namespace MovieRating.Controllers
                 return StatusCode(500, $"Database error: {ex.Message}");
             }
 
-            return CreatedAtAction(nameof(GetRating), new { id = rating.Id }, rating);
+            return Ok(rating);
         }
     }
 

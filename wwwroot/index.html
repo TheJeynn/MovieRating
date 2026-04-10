@@ -5,20 +5,21 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>CineVault — Discover & Rate</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=DM+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=DM+Sans:ital,wght@0,300;0,400;0,500;0,600;1,400&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="style.css">
 </head>
 <body>
 
-    <!-- ── NAVBAR ─────────────────────────────────────────── -->
+    <!-- ── NAVBAR ──────────────────────────────────────────────── -->
     <nav class="navbar">
         <div class="nav-logo">CINE<span>VAULT</span></div>
-        <div class="nav-tabs">
+        <div class="nav-tabs" id="navTabs">
             <button class="nav-tab active" data-view="trending">🔥 Trending</button>
             <button class="nav-tab" data-view="movies">🎬 Movies</button>
             <button class="nav-tab" data-view="series">📺 Series</button>
             <button class="nav-tab" data-view="toprated">⭐ Top Rated</button>
             <button class="nav-tab" data-view="myratings">❤️ My Ratings</button>
+            <button class="nav-tab recommend-tab" data-view="recommend">✨ Suggest</button>
         </div>
         <div class="nav-search">
             <input type="text" id="searchInput" placeholder="Search movies, shows...">
@@ -30,16 +31,17 @@
         <button class="nav-hamburger" id="hamburger">☰</button>
     </nav>
 
-    <!-- ── MOBILE MENU ────────────────────────────────────── -->
+    <!-- ── MOBILE MENU ─────────────────────────────────────────── -->
     <div class="mobile-menu" id="mobileMenu">
         <button class="nav-tab active" data-view="trending">🔥 Trending</button>
         <button class="nav-tab" data-view="movies">🎬 Movies</button>
         <button class="nav-tab" data-view="series">📺 Series</button>
         <button class="nav-tab" data-view="toprated">⭐ Top Rated</button>
         <button class="nav-tab" data-view="myratings">❤️ My Ratings</button>
+        <button class="nav-tab recommend-tab" data-view="recommend">✨ Suggest</button>
     </div>
 
-    <!-- ── HERO ───────────────────────────────────────────── -->
+    <!-- ── HERO ────────────────────────────────────────────────── -->
     <section class="hero" id="hero">
         <div class="hero-bg" id="heroBg"></div>
         <div class="hero-overlay"></div>
@@ -50,23 +52,103 @@
             <div class="hero-meta" id="heroMeta"></div>
             <div class="hero-actions">
                 <button class="btn-primary" id="heroRateBtn">⭐ Rate This</button>
-                <button class="btn-secondary" id="heroInfoBtn" onclick="scrollToGrid()">See More ↓</button>
+                <button class="btn-secondary" onclick="scrollToGrid()">See More ↓</button>
             </div>
         </div>
         <div class="hero-dots" id="heroDots"></div>
     </section>
 
-    <!-- ── MAIN CONTENT ───────────────────────────────────── -->
-    <main class="content">
+    <!-- ── RECOMMEND PAGE ──────────────────────────────────────── -->
+    <section class="recommend-page" id="recommendPage" style="display:none">
+        <div class="rec-container">
 
-        <!-- Filter Bar -->
+            <!-- Step 1: Type -->
+            <div class="rec-step" id="recStep1">
+                <div class="rec-header">
+                    <div class="rec-step-num">01</div>
+                    <h2>What are you in the mood for?</h2>
+                    <p>Choose what you'd like to watch tonight</p>
+                </div>
+                <div class="rec-type-grid">
+                    <button class="rec-type-card" onclick="selectType('movie')">
+                        <span class="rec-type-icon">🎬</span>
+                        <span class="rec-type-label">Movie</span>
+                        <span class="rec-type-sub">~2 hours of story</span>
+                    </button>
+                    <button class="rec-type-card" onclick="selectType('tv')">
+                        <span class="rec-type-icon">📺</span>
+                        <span class="rec-type-label">TV Show</span>
+                        <span class="rec-type-sub">Binge-worthy series</span>
+                    </button>
+                </div>
+            </div>
+
+            <!-- Step 2: Genres -->
+            <div class="rec-step" id="recStep2" style="display:none">
+                <div class="rec-header">
+                    <div class="rec-step-num">02</div>
+                    <h2>What genres interest you?</h2>
+                    <p>Select one or more — we'll find titles that match all of them</p>
+                </div>
+                <div class="rec-genre-grid" id="recGenreGrid"></div>
+                <div class="rec-step-actions">
+                    <button class="btn-ghost" onclick="backToStep1()">← Back</button>
+                    <button class="btn-primary" id="recFindBtn" onclick="findRecommendation()" disabled>Find for Me ✨</button>
+                </div>
+            </div>
+
+            <!-- Step 3: Result -->
+            <div class="rec-step" id="recStep3" style="display:none">
+                <div class="rec-result" id="recResult">
+                    <div class="rec-result-loading" id="recLoading">
+                        <div class="spinner"></div>
+                        <p>Finding the perfect pick...</p>
+                    </div>
+                    <div class="rec-result-card" id="recCard" style="display:none">
+                        <div class="rec-card-inner">
+                            <div class="rec-card-poster">
+                                <img id="recPoster" src="" alt="">
+                                <div class="rec-card-score" id="recScore"></div>
+                            </div>
+                            <div class="rec-card-info">
+                                <div class="rec-card-badge" id="recBadge">MOVIE</div>
+                                <h2 id="recTitle"></h2>
+                                <p class="rec-card-year" id="recYear"></p>
+                                <p class="rec-card-overview" id="recOverview"></p>
+                                <div class="rec-card-genres" id="recGenreTags"></div>
+                                <p class="rec-card-question">Already watched this one?</p>
+                                <div class="rec-card-actions">
+                                    <button class="btn-primary" id="recRateBtn">⭐ Rate This</button>
+                                    <button class="btn-ghost" onclick="markWatchedAndSkip()">✓ Seen it — Next</button>
+                                    <button class="btn-ghost" onclick="skipRecommendation()">↻ Different Pick</button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="rec-error" id="recError" style="display:none">
+                        <p id="recErrorMsg">No results found. Try different genres.</p>
+                        <button class="btn-ghost" onclick="backToStep2()">← Try Again</button>
+                    </div>
+                </div>
+            </div>
+
+        </div>
+    </section>
+
+    <!-- ── MAIN CONTENT ─────────────────────────────────────────── -->
+    <main class="content" id="mainContent">
+
+        <!-- Advanced Filter Bar -->
         <div class="filter-bar" id="filterBar">
             <div class="filter-left">
                 <h2 class="section-title" id="sectionTitle">Trending Today</h2>
                 <span class="result-count" id="resultCount"></span>
             </div>
             <div class="filter-right">
-                <div class="genre-filter" id="genreFilter"></div>
+                <button class="filter-toggle-btn" id="filterToggleBtn" onclick="toggleAdvancedFilter()">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="4" y1="6" x2="20" y2="6" /><line x1="8" y1="12" x2="16" y2="12" /><line x1="11" y1="18" x2="13" y2="18" /></svg>
+                    Filters
+                </button>
                 <select class="sort-select" id="sortSelect">
                     <option value="default">Sort: Default</option>
                     <option value="rating_high">Rating: High → Low</option>
@@ -76,6 +158,42 @@
             </div>
         </div>
 
+        <!-- Advanced Filter Panel -->
+        <div class="advanced-filter" id="advancedFilter" style="display:none">
+            <div class="adv-filter-inner">
+                <div class="adv-filter-section">
+                    <label class="adv-label">Rating Range</label>
+                    <div class="rating-range">
+                        <span id="ratingMin">0</span>
+                        <input type="range" id="ratingMinRange" min="0" max="10" step="0.5" value="0" oninput="updateRatingFilter()">
+                        <span>—</span>
+                        <input type="range" id="ratingMaxRange" min="0" max="10" step="0.5" value="10" oninput="updateRatingFilter()">
+                        <span id="ratingMax">10</span>
+                    </div>
+                </div>
+                <div class="adv-filter-section">
+                    <label class="adv-label">Genre</label>
+                    <div class="adv-genre-list" id="advGenreList"></div>
+                </div>
+                <div class="adv-filter-section adv-filter-section-compact">
+                    <label class="adv-label">Genre Match</label>
+                    <div class="adv-match-toggle">
+                        <button class="adv-match-btn active" id="matchAnyBtn" type="button" onclick="setFilterGenreMode('any')">Any</button>
+                        <button class="adv-match-btn" id="matchAllBtn" type="button" onclick="setFilterGenreMode('all')">All</button>
+                    </div>
+                </div>
+                <div class="adv-filter-actions">
+                    <button class="btn-ghost small" onclick="clearFilters()">Clear All</button>
+                    <button class="btn-primary small" onclick="applyFilters()">Apply</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Genre Quick Filter (for movies/series) -->
+        <div class="genre-quick-bar" id="genreQuickBar" style="display:none">
+            <div class="genre-filter" id="genreFilter"></div>
+        </div>
+
         <!-- Grid -->
         <div class="movie-grid" id="movieGrid"></div>
 
@@ -83,10 +201,9 @@
         <div class="load-more-wrap" id="loadMoreWrap">
             <button class="btn-load-more" id="loadMoreBtn" onclick="loadMore()">Load More</button>
         </div>
-
     </main>
 
-    <!-- ── RATING MODAL ───────────────────────────────────── -->
+    <!-- ── RATING MODAL ─────────────────────────────────────────── -->
     <div class="modal-overlay" id="modalOverlay" onclick="closeModal()">
         <div class="modal" onclick="event.stopPropagation()">
             <button class="modal-close" onclick="closeModal()">✕</button>
