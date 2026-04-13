@@ -39,6 +39,12 @@ namespace MovieRating.DTOs
 
         [JsonPropertyName("genre_ids")]
         public List<int> GenreIds { get; set; } = new();
+
+        [JsonPropertyName("content_rating")]
+        public string? ContentRating { get; set; }
+
+        [JsonPropertyName("content_rating_age")]
+        public int? ContentRatingAge { get; set; }
     }
 
     public class TmdbResponse

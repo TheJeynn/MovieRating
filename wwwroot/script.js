@@ -5,6 +5,10 @@ const MOVIES = `${API}/Movies`;
 const RECOMMEND = `${API}/Recommend`;
 const IMG = "https://image.tmdb.org/t/p/w500";
 const IMG_BIG = "https://image.tmdb.org/t/p/original";
+const SCORE_MIN = 0;
+const SCORE_MAX = 10;
+const DEFAULT_REC_MIN_SCORE = 6.5;
+const DEFAULT_REC_MAX_SCORE = 10;
 
 // ── STATE ────────────────────────────────────────────────────────
 let currentView = "trending";
@@ -20,18 +24,23 @@ let selectedScore = 0;
 let currentItem = null;
 let searchTimer = null;
 let genres = { movie: [], tv: [] };
+let contentRatingCache = { movie: {}, tv: {} };
 
 // Recommend state
 let recType = "movie";
 let recSelectedGenres = [];
 let recExcludeIds = [];
 let recCurrentItem = null;
+let recMinRating = DEFAULT_REC_MIN_SCORE;
+let recMaxRating = DEFAULT_REC_MAX_SCORE;
+let recAgeRating = "all";
 
 // Filter state
 let filterMinRating = 0;
 let filterMaxRating = 10;
 let filterGenreIds = [];
 let filterGenreMode = "any";
+let filterAgeRating = "all";
 let advFilterOpen = false;
 
 // Genre name map (populated from API)
@@ -44,6 +53,8 @@ document.addEventListener('DOMContentLoaded', () => {
     setupStars();
     setupSort();
     setupHamburger();
+    syncMainFilterControls();
+    resetRecommendFilters();
     loadView("trending");
 });
 
@@ -131,6 +142,10 @@ async function loadView(view, append = false) {
             allItems = [...allItems, ...results];
         }
 
+        if (filterAgeRating !== "all") {
+            await ensureItemsHaveContentRatings(append ? results : allItems);
+        }
+
         const shouldAppend = append && !hasActiveFilters() && currentSort === "default";
         renderGrid(shouldAppend ? results : getFilteredItems(), shouldAppend);
         updateLoadMore();
@@ -148,6 +163,11 @@ function getFilteredItems() {
     return allItems.filter(item => {
         const score = item.vote_average || 0;
         if (score < filterMinRating || score > filterMaxRating) return false;
+
+        if (!matchesSelectedAge(item.contentRatingAge ?? item.content_rating_age, filterAgeRating)) {
+            return false;
+        }
+
         if (filterGenreIds.length > 0) {
             const itemGenres = item.genre_ids || item.genreIds || [];
             const matchesGenres = filterGenreMode === "all"
@@ -228,7 +248,14 @@ function renderMyRatings(ratings) {
             <div class="card-body">
                 <div class="card-title">${escHtml(r.movieTitle)}</div>
                 <div class="card-user-score">Your Score: ${r.score}/10</div>
+                <div class="my-rating-actions">
+                    <button class="btn-ghost small card-remove-rating" type="button">Take Back Rating</button>
+                </div>
             </div>`;
+        card.querySelector('.card-remove-rating')?.addEventListener('click', event => {
+            event.stopPropagation();
+            deleteRating(r.id, event.currentTarget);
+        });
         grid.appendChild(card);
     });
 }
@@ -315,6 +342,7 @@ async function populateAdvGenres() {
     const list = await getAdvancedGenreList();
     const container = document.getElementById('advGenreList');
 
+    syncMainFilterControls();
     syncFilterGenreModeButtons();
 
     if (!list.length) {
@@ -352,6 +380,15 @@ function setFilterGenreMode(mode) {
     syncFilterGenreModeButtons();
 }
 
+async function setFilterAgeRating(value) {
+    filterAgeRating = normalizeAgeOption(value);
+    syncAgeFilterButtons('ageFilterGroup', filterAgeRating);
+
+    if (filterAgeRating !== "all" && allItems.length > 0) {
+        await ensureItemsHaveContentRatings(allItems);
+    }
+}
+
 function syncFilterGenreModeButtons() {
     document.getElementById('matchAnyBtn')?.classList.toggle('active', filterGenreMode === "any");
     document.getElementById('matchAllBtn')?.classList.toggle('active', filterGenreMode === "all");
@@ -363,20 +400,28 @@ function toggleAdvGenre(id, btn) {
     else filterGenreIds.push(id);
 }
 
-function updateRatingFilter() {
-    filterMinRating = parseFloat(document.getElementById('ratingMinRange').value);
-    filterMaxRating = parseFloat(document.getElementById('ratingMaxRange').value);
-    if (filterMinRating > filterMaxRating) {
-        const tmp = filterMinRating; filterMinRating = filterMaxRating; filterMaxRating = tmp;
-    }
-    document.getElementById('ratingMin').textContent = filterMinRating;
-    document.getElementById('ratingMax').textContent = filterMaxRating;
+function updateRatingFilter(source = "range") {
+    const minValue = source === "input"
+        ? document.getElementById('ratingMinInput').value
+        : document.getElementById('ratingMinRange').value;
+    const maxValue = source === "input"
+        ? document.getElementById('ratingMaxInput').value
+        : document.getElementById('ratingMaxRange').value;
+
+    [filterMinRating, filterMaxRating] = normalizeScorePair(minValue, maxValue, filterMinRating, filterMaxRating);
+    syncMainFilterControls();
 }
 
-function applyFilters() {
+async function applyFilters() {
+    if (filterAgeRating !== "all" && allItems.length > 0) {
+        showGridLoading();
+        await ensureItemsHaveContentRatings(allItems);
+    }
+
     renderGrid(getFilteredItems());
     updateLoadMore();
-    toggleAdvancedFilter();
+
+    if (advFilterOpen) await toggleAdvancedFilter();
 }
 
 function clearFilters() {
@@ -550,9 +595,44 @@ async function submitRating() {
     }
 }
 
+async function deleteRating(id, button) {
+    if (!id || !confirm("Take back this rating? This will remove it from My Ratings.")) {
+        return;
+    }
+
+    const btn = button instanceof HTMLElement ? button : null;
+    const originalLabel = btn?.textContent ?? "";
+
+    if (btn) {
+        btn.disabled = true;
+        btn.textContent = "Removing...";
+    }
+
+    try {
+        const res = await fetch(`${RATINGS}/${id}`, { method: "DELETE" });
+        if (!res.ok) {
+            const err = await res.text();
+            throw new Error(err || `HTTP ${res.status}`);
+        }
+
+        if (currentView === "myratings") {
+            await loadView("myratings");
+        }
+    } catch (err) {
+        console.error(err);
+        alert("Rating could not be removed. Please try again.");
+
+        if (btn) {
+            btn.disabled = false;
+            btn.textContent = originalLabel;
+        }
+    }
+}
+
 // ── RECOMMEND ────────────────────────────────────────────────────
 function initRecommend() {
     recType = "movie"; recSelectedGenres = []; recExcludeIds = []; recCurrentItem = null;
+    resetRecommendFilters();
     document.getElementById('recFindBtn').disabled = true;
     showRecStep(1);
 }
@@ -598,6 +678,23 @@ function toggleRecGenre(id, btn) {
     document.getElementById('recFindBtn').disabled = recSelectedGenres.length === 0;
 }
 
+function setRecommendAgeRating(value) {
+    recAgeRating = normalizeAgeOption(value);
+    syncAgeFilterButtons('recAgeFilterGroup', recAgeRating);
+}
+
+function updateRecommendRatingFilter(source = "range") {
+    const minValue = source === "input"
+        ? document.getElementById('recRatingMinInput').value
+        : document.getElementById('recRatingMinRange').value;
+    const maxValue = source === "input"
+        ? document.getElementById('recRatingMaxInput').value
+        : document.getElementById('recRatingMaxRange').value;
+
+    [recMinRating, recMaxRating] = normalizeScorePair(minValue, maxValue, recMinRating, recMaxRating);
+    syncRecommendRatingControls();
+}
+
 function backToStep1() { showRecStep(1); }
 function backToStep2() { showRecStep(2); }
 
@@ -612,7 +709,15 @@ async function findRecommendation() {
         const item = await fetchJSON(RECOMMEND, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ type: recType, genreIds: recSelectedGenres, excludeIds: [...new Set(recExcludeIds)], genreMode: "all" })
+            body: JSON.stringify({
+                type: recType,
+                genreIds: recSelectedGenres,
+                excludeIds: [...new Set(recExcludeIds)],
+                genreMode: "all",
+                minRating: recMinRating,
+                maxRating: recMaxRating,
+                ageRating: recAgeRating
+            })
         });
 
         recCurrentItem = item;
@@ -627,11 +732,13 @@ async function findRecommendation() {
 
 function showRecCard(item) {
     const title = item.title || item.name || "Unknown";
-    const type = item.mediaType === "tv" ? "TV SHOW" : "MOVIE";
+    const mediaType = item.mediaType || item.media_type;
+    const type = mediaType === "tv" ? "TV SHOW" : "MOVIE";
     const year = (item.releaseDate || item.firstAirDate || item.release_date || item.first_air_date || "").slice(0, 4);
     const score = item.voteAverage || item.vote_average;
     const poster = item.posterPath || item.poster_path;
     const overview = item.overview || "No description available.";
+    const contentRating = item.contentRating || item.content_rating;
 
     document.getElementById('recPoster').src = poster ? `${IMG}${poster}` : "https://via.placeholder.com/260x380/1e1e2a/5a5a72?text=?";
     document.getElementById('recBadge').textContent = type;
@@ -639,6 +746,8 @@ function showRecCard(item) {
     document.getElementById('recYear').textContent = year;
     document.getElementById('recOverview').textContent = overview;
     document.getElementById('recScore').textContent = score ? `★ ${(+score).toFixed(1)}` : "";
+    document.getElementById('recContentRating').textContent = contentRating ? `Age ${contentRating}` : "";
+    document.getElementById('recContentRating').style.display = contentRating ? "inline-flex" : "none";
 
     // Genre tags
     const gids = item.genreIds || item.genre_ids || [];
@@ -650,7 +759,7 @@ function showRecCard(item) {
         overview: item.overview, poster_path: item.posterPath || item.poster_path,
         vote_average: score, release_date: item.releaseDate || item.release_date,
         first_air_date: item.firstAirDate || item.first_air_date,
-        media_type: item.mediaType || "movie"
+        media_type: mediaType || "movie"
     });
 
     document.getElementById('recLoading').style.display = "none";
@@ -673,23 +782,225 @@ function setupHamburger() {
 
 // ── HELPERS ──────────────────────────────────────────────────────
 function hasActiveFilters() {
-    return filterMinRating > 0 || filterMaxRating < 10 || filterGenreIds.length > 0;
+    return filterMinRating > SCORE_MIN ||
+        filterMaxRating < SCORE_MAX ||
+        filterGenreIds.length > 0 ||
+        filterAgeRating !== "all";
 }
 
 function resetFilterState() {
-    filterMinRating = 0;
-    filterMaxRating = 10;
+    filterMinRating = SCORE_MIN;
+    filterMaxRating = SCORE_MAX;
     filterGenreIds = [];
     filterGenreMode = "any";
+    filterAgeRating = "all";
     advFilterOpen = false;
 
     document.getElementById('advancedFilter').style.display = "none";
     document.getElementById('filterToggleBtn').classList.remove('active');
-    document.getElementById('ratingMinRange').value = 0;
-    document.getElementById('ratingMaxRange').value = 10;
-    document.getElementById('ratingMin').textContent = 0;
-    document.getElementById('ratingMax').textContent = 10;
+    syncMainFilterControls();
     syncFilterGenreModeButtons();
+    syncAgeFilterButtons('ageFilterGroup', filterAgeRating);
+}
+
+function resetRecommendFilters() {
+    recMinRating = DEFAULT_REC_MIN_SCORE;
+    recMaxRating = DEFAULT_REC_MAX_SCORE;
+    recAgeRating = "all";
+    syncRecommendRatingControls();
+}
+
+function syncMainFilterControls() {
+    syncScoreControls(
+        {
+            minLabelId: 'ratingMin',
+            maxLabelId: 'ratingMax',
+            minInputId: 'ratingMinInput',
+            maxInputId: 'ratingMaxInput',
+            minRangeId: 'ratingMinRange',
+            maxRangeId: 'ratingMaxRange',
+            shellId: 'ratingRangeShell'
+        },
+        filterMinRating,
+        filterMaxRating
+    );
+    syncAgeFilterButtons('ageFilterGroup', filterAgeRating);
+}
+
+function syncRecommendRatingControls() {
+    syncScoreControls(
+        {
+            minLabelId: 'recRatingMinLabel',
+            maxLabelId: 'recRatingMaxLabel',
+            minInputId: 'recRatingMinInput',
+            maxInputId: 'recRatingMaxInput',
+            minRangeId: 'recRatingMinRange',
+            maxRangeId: 'recRatingMaxRange',
+            shellId: 'recRatingRangeShell'
+        },
+        recMinRating,
+        recMaxRating
+    );
+    syncAgeFilterButtons('recAgeFilterGroup', recAgeRating);
+}
+
+function syncScoreControls(config, minValue, maxValue) {
+    const minText = formatScoreValue(minValue);
+    const maxText = formatScoreValue(maxValue);
+
+    document.getElementById(config.minLabelId).textContent = minText;
+    document.getElementById(config.maxLabelId).textContent = maxText;
+    document.getElementById(config.minInputId).value = minText;
+    document.getElementById(config.maxInputId).value = maxText;
+    document.getElementById(config.minRangeId).value = minText;
+    document.getElementById(config.maxRangeId).value = maxText;
+
+    const rangeStart = `${((minValue - SCORE_MIN) / (SCORE_MAX - SCORE_MIN)) * 100}%`;
+    const rangeEnd = `${((maxValue - SCORE_MIN) / (SCORE_MAX - SCORE_MIN)) * 100}%`;
+    document.getElementById(config.shellId).style.setProperty('--range-start', rangeStart);
+    document.getElementById(config.shellId).style.setProperty('--range-end', rangeEnd);
+}
+
+function syncAgeFilterButtons(containerId, selectedValue) {
+    document.querySelectorAll(`#${containerId} .age-filter-chip`).forEach(btn => {
+        const isSelected = btn.dataset.value === selectedValue;
+        btn.classList.toggle('active', isSelected);
+        btn.classList.toggle('selected', isSelected);
+    });
+}
+
+function normalizeAgeOption(value) {
+    return ["all", "family", "13", "16", "18"].includes(String(value)) ? String(value) : "all";
+}
+
+function getAgeOptionValue(value) {
+    switch (normalizeAgeOption(value)) {
+        case "family": return 0;
+        case "13": return 13;
+        case "16": return 16;
+        case "18": return 18;
+        default: return null;
+    }
+}
+
+function matchesSelectedAge(ageValue, selectedValue) {
+    const selectedAge = getAgeOptionValue(selectedValue);
+    if (selectedAge === null) return true;
+
+    const normalizedAge = Number(ageValue);
+    return Number.isFinite(normalizedAge) && normalizedAge === selectedAge;
+}
+
+function normalizeScorePair(minValue, maxValue, fallbackMin = SCORE_MIN, fallbackMax = SCORE_MAX) {
+    let normalizedMin = Number.parseFloat(minValue);
+    let normalizedMax = Number.parseFloat(maxValue);
+
+    if (!Number.isFinite(normalizedMin)) normalizedMin = fallbackMin;
+    if (!Number.isFinite(normalizedMax)) normalizedMax = fallbackMax;
+
+    normalizedMin = clampScore(normalizedMin);
+    normalizedMax = clampScore(normalizedMax);
+
+    if (normalizedMin > normalizedMax) {
+        const temp = normalizedMin;
+        normalizedMin = normalizedMax;
+        normalizedMax = temp;
+    }
+
+    return [roundScore(normalizedMin), roundScore(normalizedMax)];
+}
+
+function clampScore(value) {
+    return Math.min(SCORE_MAX, Math.max(SCORE_MIN, value));
+}
+
+function roundScore(value) {
+    return Math.round(value * 10) / 10;
+}
+
+function formatScoreValue(value) {
+    return roundScore(value).toFixed(1);
+}
+
+async function ensureItemsHaveContentRatings(items) {
+    if (!items || items.length === 0) return;
+
+    const pendingByType = { movie: [], tv: [] };
+
+    items.forEach(item => {
+        if (!item?.id) return;
+
+        const type = getItemMediaType(item);
+        const existing = readItemContentRating(item);
+        if (existing) {
+            contentRatingCache[type][item.id] = existing;
+            applyContentRatingToItem(item, existing);
+            return;
+        }
+
+        const cached = contentRatingCache[type][item.id];
+        if (cached !== undefined) {
+            applyContentRatingToItem(item, cached);
+            return;
+        }
+
+        pendingByType[type].push(item.id);
+    });
+
+    await Promise.all(Object.entries(pendingByType)
+        .filter(([, ids]) => ids.length > 0)
+        .map(async ([type, ids]) => {
+            const uniqueIds = [...new Set(ids)];
+
+            try {
+                const query = uniqueIds.map(id => `ids=${id}`).join('&');
+                const data = await fetchJSON(`${MOVIES}/content-ratings?type=${type}&${query}`);
+                const foundIds = new Set();
+
+                (data || []).forEach(entry => {
+                    const rating = {
+                        contentRating: entry.contentRating ?? entry.content_rating ?? null,
+                        contentRatingAge: entry.contentRatingAge ?? entry.content_rating_age ?? null
+                    };
+
+                    contentRatingCache[type][entry.id] = rating;
+                    foundIds.add(entry.id);
+                });
+
+                uniqueIds.forEach(id => {
+                    if (!foundIds.has(id)) contentRatingCache[type][id] = null;
+                });
+            } catch {
+                uniqueIds.forEach(id => {
+                    if (contentRatingCache[type][id] === undefined) contentRatingCache[type][id] = null;
+                });
+            }
+        }));
+
+    items.forEach(item => {
+        if (!item?.id) return;
+        applyContentRatingToItem(item, contentRatingCache[getItemMediaType(item)][item.id] ?? null);
+    });
+}
+
+function getItemMediaType(item) {
+    return item.mediaType === "tv" || item.media_type === "tv" ? "tv" : "movie";
+}
+
+function readItemContentRating(item) {
+    const contentRating = item.contentRating ?? item.content_rating ?? null;
+    const contentRatingAge = item.contentRatingAge ?? item.content_rating_age ?? null;
+
+    return contentRating || contentRatingAge !== null
+        ? { contentRating, contentRatingAge }
+        : null;
+}
+
+function applyContentRatingToItem(item, rating) {
+    item.contentRating = rating?.contentRating ?? null;
+    item.content_rating = rating?.contentRating ?? null;
+    item.contentRatingAge = rating?.contentRatingAge ?? null;
+    item.content_rating_age = rating?.contentRatingAge ?? null;
 }
 
 function updateFilterControlsVisibility(view) {

@@ -1,5 +1,6 @@
 using Microsoft.AspNetCore.Mvc;
 using MovieRating.DTOs;
+using MovieRating.Services;
 using System.Globalization;
 using System.Net.Http.Json;
 using System.Text;
@@ -11,11 +12,13 @@ namespace MovieRating.Controllers
     public class MoviesController : ControllerBase
     {
         private readonly IHttpClientFactory _httpClientFactory;
+        private readonly TmdbContentRatingService _contentRatingService;
         private readonly string _tmdbToken;
 
-        public MoviesController(IHttpClientFactory httpClientFactory)
+        public MoviesController(IHttpClientFactory httpClientFactory, TmdbContentRatingService contentRatingService)
         {
             _httpClientFactory = httpClientFactory;
+            _contentRatingService = contentRatingService;
             _tmdbToken = Environment.GetEnvironmentVariable("TMDB_KEY") ?? string.Empty;
         }
 
@@ -111,6 +114,38 @@ namespace MovieRating.Controllers
                 return NotFound("Genres not found.");
 
             return Ok(response.Genres);
+        }
+
+        // GET: api/Movies/content-ratings?type=movie&ids=28&ids=12
+        [HttpGet("content-ratings")]
+        public async Task<IActionResult> GetContentRatings([FromQuery] string type = "movie", [FromQuery] List<int>? ids = null)
+        {
+            if (string.IsNullOrEmpty(_tmdbToken))
+                return BadRequest("TMDB_KEY not found in environment.");
+
+            var selectedIds = ids?
+                .Where(id => id > 0)
+                .Distinct()
+                .Take(40)
+                .ToList() ?? new List<int>();
+
+            if (selectedIds.Count == 0)
+                return Ok(Array.Empty<ContentRatingDto>());
+
+            type = NormalizeType(type);
+
+            var ratings = await _contentRatingService.GetContentRatingsAsync(
+                GetClient(),
+                type,
+                selectedIds,
+                HttpContext.RequestAborted);
+
+            var orderedRatings = selectedIds
+                .Where(id => ratings.ContainsKey(id))
+                .Select(id => ratings[id])
+                .ToList();
+
+            return Ok(orderedRatings);
         }
 
         // GET: api/Movies/discover?type=movie&genreId=28&page=1

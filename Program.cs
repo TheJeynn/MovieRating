@@ -1,5 +1,6 @@
 using MovieRating.Data;
 using Microsoft.EntityFrameworkCore;
+using MovieRating.Services;
 
 // --- STEP 1: LOAD .ENV AT THE VERY START ---
 var root = Directory.GetCurrentDirectory();
@@ -32,6 +33,7 @@ builder.Services.AddCors(options =>
 builder.Services.AddControllers();
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
+builder.Services.AddSingleton<TmdbContentRatingService>();
 
 var connectionString = Environment.GetEnvironmentVariable("DB_CONNECTION")
                        ?? builder.Configuration.GetConnectionString("DefaultConnection");

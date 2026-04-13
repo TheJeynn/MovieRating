@@ -151,6 +151,30 @@ namespace MovieRating.Controllers
 
             return Ok(rating);
         }
+
+        // DELETE: api/Ratings/5
+        [HttpDelete("{id}")]
+        public async Task<IActionResult> DeleteRating(int id)
+        {
+            var rating = await _context.Ratings
+                .AsNoTracking()
+                .FirstOrDefaultAsync(r => r.Id == id);
+
+            if (rating == null)
+                return NotFound("Rating not found.");
+
+            var ratingsToDelete = await _context.Ratings
+                .Where(r => r.TmdbId == rating.TmdbId && r.MediaType == rating.MediaType)
+                .ToListAsync();
+
+            if (ratingsToDelete.Count == 0)
+                return NotFound("Rating not found.");
+
+            _context.Ratings.RemoveRange(ratingsToDelete);
+            await _context.SaveChangesAsync();
+
+            return NoContent();
+        }
     }
 
     public class TmdbTvResponse

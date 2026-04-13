@@ -88,9 +88,56 @@
                 <div class="rec-header">
                     <div class="rec-step-num">02</div>
                     <h2>What genres interest you?</h2>
-                    <p>Select one or more — we'll find titles that match all of them</p>
+                    <p>Select one or more, then narrow the result by age rating and score</p>
+                </div>
+                <div class="rec-inline-filters">
+                    <div class="rec-inline-filter-head">
+                        <label class="adv-label">Age Preference</label>
+                        <p>Choose the audience rating you want before we suggest a title.</p>
+                    </div>
+                    <div class="age-filter-group rec-age-filter-group" id="recAgeFilterGroup">
+                        <button class="rec-genre-chip age-filter-chip active selected" type="button" data-value="all" onclick="setRecommendAgeRating('all')">All</button>
+                        <button class="rec-genre-chip age-filter-chip" type="button" data-value="family" onclick="setRecommendAgeRating('family')">Family</button>
+                        <button class="rec-genre-chip age-filter-chip" type="button" data-value="13" onclick="setRecommendAgeRating('13')">13+</button>
+                        <button class="rec-genre-chip age-filter-chip" type="button" data-value="16" onclick="setRecommendAgeRating('16')">16+</button>
+                        <button class="rec-genre-chip age-filter-chip" type="button" data-value="18" onclick="setRecommendAgeRating('18')">18+</button>
+                    </div>
                 </div>
                 <div class="rec-genre-grid" id="recGenreGrid"></div>
+                <div class="rec-preferences">
+                    <div class="rec-preferences-card">
+                        <div class="rec-preferences-head">
+                            <h3>Score Preference</h3>
+                            <p>Use the orange range bar or type values manually to control the score band.</p>
+                        </div>
+                        <div class="rec-preferences-grid">
+                            <div class="rec-pref-block">
+                                <label class="adv-label">Score Range</label>
+                                <div class="score-filter score-filter-compact">
+                                    <div class="score-filter-values">
+                                        <span id="recRatingMinLabel">6.5</span>
+                                        <span>to</span>
+                                        <span id="recRatingMaxLabel">10.0</span>
+                                    </div>
+                                    <div class="score-input-row">
+                                        <label class="score-input-field">
+                                            <span>Min</span>
+                                            <input type="number" id="recRatingMinInput" min="0" max="10" step="0.1" value="6.5" onchange="updateRecommendRatingFilter('input')">
+                                        </label>
+                                        <label class="score-input-field">
+                                            <span>Max</span>
+                                            <input type="number" id="recRatingMaxInput" min="0" max="10" step="0.1" value="10.0" onchange="updateRecommendRatingFilter('input')">
+                                        </label>
+                                    </div>
+                                    <div class="range-slider-shell" id="recRatingRangeShell">
+                                        <input type="range" id="recRatingMinRange" min="0" max="10" step="0.1" value="6.5" oninput="updateRecommendRatingFilter('range')">
+                                        <input type="range" id="recRatingMaxRange" min="0" max="10" step="0.1" value="10.0" oninput="updateRecommendRatingFilter('range')">
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
                 <div class="rec-step-actions">
                     <button class="btn-ghost" onclick="backToStep1()">← Back</button>
                     <button class="btn-primary" id="recFindBtn" onclick="findRecommendation()" disabled>Find for Me ✨</button>
@@ -114,6 +161,9 @@
                                 <div class="rec-card-badge" id="recBadge">MOVIE</div>
                                 <h2 id="recTitle"></h2>
                                 <p class="rec-card-year" id="recYear"></p>
+                                <div class="rec-card-pills">
+                                    <span class="rec-info-pill" id="recContentRating" style="display:none"></span>
+                                </div>
                                 <p class="rec-card-overview" id="recOverview"></p>
                                 <div class="rec-card-genres" id="recGenreTags"></div>
                                 <p class="rec-card-question">Already watched this one?</p>
@@ -162,18 +212,42 @@
         <div class="advanced-filter" id="advancedFilter" style="display:none">
             <div class="adv-filter-inner">
                 <div class="adv-filter-section">
-                    <label class="adv-label">Rating Range</label>
-                    <div class="rating-range">
-                        <span id="ratingMin">0</span>
-                        <input type="range" id="ratingMinRange" min="0" max="10" step="0.5" value="0" oninput="updateRatingFilter()">
-                        <span>—</span>
-                        <input type="range" id="ratingMaxRange" min="0" max="10" step="0.5" value="10" oninput="updateRatingFilter()">
-                        <span id="ratingMax">10</span>
+                    <label class="adv-label">Score Range</label>
+                    <div class="score-filter">
+                        <div class="score-filter-values">
+                            <span id="ratingMin">0.0</span>
+                            <span>to</span>
+                            <span id="ratingMax">10.0</span>
+                        </div>
+                        <div class="score-input-row">
+                            <label class="score-input-field">
+                                <span>Min</span>
+                                <input type="number" id="ratingMinInput" min="0" max="10" step="0.1" value="0.0" onchange="updateRatingFilter('input')">
+                            </label>
+                            <label class="score-input-field">
+                                <span>Max</span>
+                                <input type="number" id="ratingMaxInput" min="0" max="10" step="0.1" value="10.0" onchange="updateRatingFilter('input')">
+                            </label>
+                        </div>
+                        <div class="range-slider-shell" id="ratingRangeShell">
+                            <input type="range" id="ratingMinRange" min="0" max="10" step="0.1" value="0.0" oninput="updateRatingFilter('range')">
+                            <input type="range" id="ratingMaxRange" min="0" max="10" step="0.1" value="10.0" oninput="updateRatingFilter('range')">
+                        </div>
                     </div>
                 </div>
                 <div class="adv-filter-section">
                     <label class="adv-label">Genre</label>
                     <div class="adv-genre-list" id="advGenreList"></div>
+                </div>
+                <div class="adv-filter-section adv-filter-section-compact">
+                    <label class="adv-label">Age Rating</label>
+                    <div class="age-filter-group" id="ageFilterGroup">
+                        <button class="age-filter-chip active" type="button" data-value="all" onclick="setFilterAgeRating('all')">All</button>
+                        <button class="age-filter-chip" type="button" data-value="family" onclick="setFilterAgeRating('family')">Family</button>
+                        <button class="age-filter-chip" type="button" data-value="13" onclick="setFilterAgeRating('13')">13+</button>
+                        <button class="age-filter-chip" type="button" data-value="16" onclick="setFilterAgeRating('16')">16+</button>
+                        <button class="age-filter-chip" type="button" data-value="18" onclick="setFilterAgeRating('18')">18+</button>
+                    </div>
                 </div>
                 <div class="adv-filter-section adv-filter-section-compact">
                     <label class="adv-label">Genre Match</label>
