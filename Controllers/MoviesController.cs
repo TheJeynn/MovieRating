@@ -1,9 +1,7 @@
 using Microsoft.AspNetCore.Mvc;
 using MovieRating.DTOs;
-using MovieRating.Services;
-using System.Globalization;
 using System.Net.Http.Json;
-using System.Text;
+using System.Text.Json.Serialization;
 
 namespace MovieRating.Controllers
 {
@@ -12,13 +10,11 @@ namespace MovieRating.Controllers
     public class MoviesController : ControllerBase
     {
         private readonly IHttpClientFactory _httpClientFactory;
-        private readonly TmdbContentRatingService _contentRatingService;
         private readonly string _tmdbToken;
 
-        public MoviesController(IHttpClientFactory httpClientFactory, TmdbContentRatingService contentRatingService)
+        public MoviesController(IHttpClientFactory httpClientFactory)
         {
             _httpClientFactory = httpClientFactory;
-            _contentRatingService = contentRatingService;
             _tmdbToken = Environment.GetEnvironmentVariable("TMDB_KEY") ?? string.Empty;
         }
 
@@ -26,34 +22,22 @@ namespace MovieRating.Controllers
         [HttpGet("trending")]
         public async Task<IActionResult> GetTrending([FromQuery] int page = 1)
         {
-            if (string.IsNullOrEmpty(_tmdbToken))
-                return BadRequest("TMDB_KEY not found in environment.");
-
             var client = GetClient();
-            var response = await client.GetAsync($"trending/all/day?language=en-US&page={Math.Max(page, 1)}");
-            if (!response.IsSuccessStatusCode)
-                return BadRequest("TMDB API Error");
-
-            var content = await response.Content.ReadAsStringAsync();
-            return Content(content, "application/json");
+            var response = await client.GetAsync($"trending/all/day?language=en-US&page={page}");
+            if (!response.IsSuccessStatusCode) return BadRequest("TMDB API Error");
+            return Content(await response.Content.ReadAsStringAsync(), "application/json");
         }
 
         // GET: api/Movies/popular?type=movie&page=1
         [HttpGet("popular")]
         public async Task<IActionResult> GetPopular([FromQuery] string type = "movie", [FromQuery] int page = 1)
         {
-            if (string.IsNullOrEmpty(_tmdbToken))
-                return BadRequest("TMDB_KEY not found in environment.");
-
-            type = NormalizeType(type);
-
             var client = GetClient();
-            var response = await client.GetAsync($"{type}/popular?language=en-US&page={Math.Max(page, 1)}");
-            if (!response.IsSuccessStatusCode)
-                return BadRequest("TMDB API Error");
-
+            var url = type == "tv" ? $"tv/popular?language=en-US&page={page}" : $"movie/popular?language=en-US&page={page}";
+            var response = await client.GetAsync(url);
+            if (!response.IsSuccessStatusCode) return BadRequest("TMDB API Error");
             var data = await response.Content.ReadFromJsonAsync<TmdbRawResponse>();
-            SetMediaType(data, type);
+            if (data?.Results != null) foreach (var r in data.Results) r.MediaType = type;
             return Ok(data);
         }
 
@@ -61,18 +45,12 @@ namespace MovieRating.Controllers
         [HttpGet("toprated")]
         public async Task<IActionResult> GetTopRated([FromQuery] string type = "movie", [FromQuery] int page = 1)
         {
-            if (string.IsNullOrEmpty(_tmdbToken))
-                return BadRequest("TMDB_KEY not found in environment.");
-
-            type = NormalizeType(type);
-
             var client = GetClient();
-            var response = await client.GetAsync($"{type}/top_rated?language=en-US&page={Math.Max(page, 1)}");
-            if (!response.IsSuccessStatusCode)
-                return BadRequest("TMDB API Error");
-
+            var url = type == "tv" ? $"tv/top_rated?language=en-US&page={page}" : $"movie/top_rated?language=en-US&page={page}";
+            var response = await client.GetAsync(url);
+            if (!response.IsSuccessStatusCode) return BadRequest("TMDB API Error");
             var data = await response.Content.ReadFromJsonAsync<TmdbRawResponse>();
-            SetMediaType(data, type);
+            if (data?.Results != null) foreach (var r in data.Results) r.MediaType = type;
             return Ok(data);
         }
 
@@ -80,194 +58,127 @@ namespace MovieRating.Controllers
         [HttpGet("search")]
         public async Task<IActionResult> Search([FromQuery] string query, [FromQuery] int page = 1)
         {
-            if (string.IsNullOrEmpty(_tmdbToken))
-                return BadRequest("TMDB_KEY not found in environment.");
-
-            if (string.IsNullOrWhiteSpace(query))
-                return BadRequest("Query is required.");
-
+            if (string.IsNullOrWhiteSpace(query)) return BadRequest("Query is required.");
             var client = GetClient();
             var encoded = Uri.EscapeDataString(query);
-            var response = await client.GetAsync(
-                $"search/multi?query={encoded}&language=en-US&page={Math.Max(page, 1)}&include_adult=false");
-
-            if (!response.IsSuccessStatusCode)
-                return BadRequest("TMDB API Error");
-
-            var content = await response.Content.ReadAsStringAsync();
-            return Content(content, "application/json");
+            var response = await client.GetAsync($"search/multi?query={encoded}&language=en-US&page={page}&include_adult=false");
+            if (!response.IsSuccessStatusCode) return BadRequest("TMDB API Error");
+            return Content(await response.Content.ReadAsStringAsync(), "application/json");
         }
 
         // GET: api/Movies/genres?type=movie
         [HttpGet("genres")]
         public async Task<IActionResult> GetGenres([FromQuery] string type = "movie")
         {
-            if (string.IsNullOrEmpty(_tmdbToken))
-                return BadRequest("TMDB_KEY not found in environment.");
-
-            type = NormalizeType(type);
-
             var client = GetClient();
             var response = await client.GetFromJsonAsync<GenreResponse>($"genre/{type}/list?language=en-US");
-
-            if (response == null)
-                return NotFound("Genres not found.");
-
+            if (response == null) return NotFound("Genres not found.");
             return Ok(response.Genres);
         }
 
-        // GET: api/Movies/content-ratings?type=movie&ids=28&ids=12
-        [HttpGet("content-ratings")]
-        public async Task<IActionResult> GetContentRatings([FromQuery] string type = "movie", [FromQuery] List<int>? ids = null)
+        // GET: api/Movies/discover?type=movie&genreId=28&page=1
+        [HttpGet("discover")]
+        public async Task<IActionResult> Discover([FromQuery] string type = "movie", [FromQuery] int? genreId = null, [FromQuery] int page = 1)
         {
-            if (string.IsNullOrEmpty(_tmdbToken))
-                return BadRequest("TMDB_KEY not found in environment.");
-
-            var selectedIds = ids?
-                .Where(id => id > 0)
-                .Distinct()
-                .Take(40)
-                .ToList() ?? new List<int>();
-
-            if (selectedIds.Count == 0)
-                return Ok(Array.Empty<ContentRatingDto>());
-
-            type = NormalizeType(type);
-
-            var ratings = await _contentRatingService.GetContentRatingsAsync(
-                GetClient(),
-                type,
-                selectedIds,
-                HttpContext.RequestAborted);
-
-            var orderedRatings = selectedIds
-                .Where(id => ratings.ContainsKey(id))
-                .Select(id => ratings[id])
-                .ToList();
-
-            return Ok(orderedRatings);
+            var client = GetClient();
+            var url = genreId.HasValue
+                ? $"discover/{type}?with_genres={genreId}&language=en-US&page={page}&sort_by=popularity.desc"
+                : $"{type}/popular?language=en-US&page={page}";
+            var response = await client.GetAsync(url);
+            if (!response.IsSuccessStatusCode) return BadRequest("TMDB API Error");
+            var data = await response.Content.ReadFromJsonAsync<TmdbRawResponse>();
+            if (data?.Results != null) foreach (var r in data.Results) r.MediaType = type;
+            return Ok(data);
         }
 
-        // GET: api/Movies/discover?type=movie&genreId=28&page=1
-        // GET: api/Movies/discover?type=movie&genreIds=28&genreIds=12&genreMode=all&minRating=7&sortBy=vote_average.desc&page=1
-        [HttpGet("discover")]
-        public async Task<IActionResult> Discover(
-            [FromQuery] string type = "movie",
-            [FromQuery] int? genreId = null,
-            [FromQuery] List<int>? genreIds = null,
-            [FromQuery] string genreMode = "any",
-            [FromQuery] double? minRating = null,
-            [FromQuery] double? maxRating = null,
-            [FromQuery] string sortBy = "popularity.desc",
-            [FromQuery] int page = 1)
+        // GET: api/Movies/providers/{id}?type=movie
+        [HttpGet("providers/{id}")]
+        public async Task<IActionResult> GetWatchProviders(int id, [FromQuery] string type = "movie")
         {
-            if (string.IsNullOrEmpty(_tmdbToken))
-                return BadRequest("TMDB_KEY not found in environment.");
+            var client = GetClient();
+            // type is "movie" or "tv"
+            var t = type == "tv" ? "tv" : "movie";
+            var response = await client.GetAsync($"{t}/{id}/watch/providers");
 
-            type = NormalizeType(type);
-            genreMode = string.Equals(genreMode, "all", StringComparison.OrdinalIgnoreCase) ? "all" : "any";
-            sortBy = IsValidSort(sortBy, type) ? sortBy : GetDefaultSort(type);
+            if (!response.IsSuccessStatusCode)
+                return Ok(new { providers = new List<object>(), message = "No streaming info available." });
 
-            var mergedGenreIds = new HashSet<int>();
-            if (genreId.HasValue && genreId.Value > 0)
-                mergedGenreIds.Add(genreId.Value);
+            var data = await response.Content.ReadFromJsonAsync<WatchProvidersRoot>();
 
-            if (genreIds != null)
+            // Try to get TR (Turkey) first, then US as fallback
+            WatchProviderRegion? region = null;
+            if (data?.Results != null)
             {
-                foreach (var id in genreIds.Where(id => id > 0))
-                    mergedGenreIds.Add(id);
+                data.Results.TryGetValue("TR", out region);
+                if (region == null) data.Results.TryGetValue("US", out region);
+                if (region == null) region = data.Results.Values.FirstOrDefault();
             }
 
-            var usePopularFallback =
-                mergedGenreIds.Count == 0 &&
-                !minRating.HasValue &&
-                !maxRating.HasValue &&
-                string.Equals(sortBy, GetDefaultSort(type), StringComparison.Ordinal);
+            if (region == null)
+                return Ok(new { providers = new List<object>(), message = "Not available on any known streaming platform." });
 
-            var url = usePopularFallback
-                ? $"{type}/popular?language=en-US&page={Math.Max(page, 1)}"
-                : BuildDiscoverUrl(type, mergedGenreIds, genreMode, minRating, maxRating, sortBy, page);
+            var flatrate = region.Flatrate ?? new List<WatchProvider>();
+            var free = region.Free ?? new List<WatchProvider>();
+            var ads = region.Ads ?? new List<WatchProvider>();
+            var rent = region.Rent ?? new List<WatchProvider>();
+            var buy = region.Buy ?? new List<WatchProvider>();
 
-            var client = GetClient();
-            var response = await client.GetAsync(url);
-            if (!response.IsSuccessStatusCode)
-                return BadRequest("TMDB API Error");
-
-            var data = await response.Content.ReadFromJsonAsync<TmdbRawResponse>();
-            SetMediaType(data, type);
-            return Ok(data);
+            return Ok(new
+            {
+                flatrate = flatrate.Take(5).Select(p => new { p.ProviderName, p.LogoPath }),
+                free = free.Take(5).Select(p => new { p.ProviderName, p.LogoPath }),
+                ads = ads.Take(5).Select(p => new { p.ProviderName, p.LogoPath }),
+                rent = rent.Take(5).Select(p => new { p.ProviderName, p.LogoPath }),
+                buy = buy.Take(5).Select(p => new { p.ProviderName, p.LogoPath }),
+                link = region.Link
+            });
         }
 
         private HttpClient GetClient()
         {
+            if (string.IsNullOrEmpty(_tmdbToken))
+                throw new InvalidOperationException("TMDB_KEY not found in environment.");
             var client = _httpClientFactory.CreateClient("TmdbClient");
             client.DefaultRequestHeaders.Authorization =
                 new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", _tmdbToken);
             return client;
         }
+    }
 
-        private static string NormalizeType(string? type)
-        {
-            return string.Equals(type, "tv", StringComparison.OrdinalIgnoreCase) ? "tv" : "movie";
-        }
+    // ── Watch Provider DTOs ───────────────────────────────────────
+    public class WatchProvidersRoot
+    {
+        [JsonPropertyName("results")]
+        public Dictionary<string, WatchProviderRegion>? Results { get; set; }
+    }
 
-        private static void SetMediaType(TmdbRawResponse? data, string type)
-        {
-            if (data?.Results == null)
-                return;
+    public class WatchProviderRegion
+    {
+        [JsonPropertyName("link")]
+        public string? Link { get; set; }
 
-            foreach (var item in data.Results)
-                item.MediaType = type;
-        }
+        [JsonPropertyName("flatrate")]
+        public List<WatchProvider>? Flatrate { get; set; }
 
-        private static bool IsValidSort(string? sortBy, string type)
-        {
-            return type == "tv"
-                ? sortBy is "popularity.desc" or "vote_average.desc" or "first_air_date.desc"
-                : sortBy is "popularity.desc" or "vote_average.desc" or "primary_release_date.desc";
-        }
+        [JsonPropertyName("free")]
+        public List<WatchProvider>? Free { get; set; }
 
-        private static string GetDefaultSort(string type)
-        {
-            return "popularity.desc";
-        }
+        [JsonPropertyName("ads")]
+        public List<WatchProvider>? Ads { get; set; }
 
-        private static string BuildDiscoverUrl(
-            string type,
-            IEnumerable<int> genreIds,
-            string genreMode,
-            double? minRating,
-            double? maxRating,
-            string sortBy,
-            int page)
-        {
-            var query = new List<string>
-            {
-                "language=en-US",
-                $"page={Math.Max(page, 1)}",
-                "include_adult=false",
-                $"sort_by={sortBy}"
-            };
+        [JsonPropertyName("rent")]
+        public List<WatchProvider>? Rent { get; set; }
 
-            var selectedGenres = genreIds.ToList();
-            if (selectedGenres.Count > 0)
-            {
-                var separator = genreMode == "all" ? "," : "|";
-                query.Add($"with_genres={string.Join(separator, selectedGenres)}");
-            }
+        [JsonPropertyName("buy")]
+        public List<WatchProvider>? Buy { get; set; }
+    }
 
-            if (minRating.HasValue)
-                query.Add($"vote_average.gte={minRating.Value.ToString("0.0", CultureInfo.InvariantCulture)}");
+    public class WatchProvider
+    {
+        [JsonPropertyName("provider_name")]
+        public string ProviderName { get; set; } = string.Empty;
 
-            if (maxRating.HasValue)
-                query.Add($"vote_average.lte={maxRating.Value.ToString("0.0", CultureInfo.InvariantCulture)}");
-
-            if (string.Equals(sortBy, "vote_average.desc", StringComparison.Ordinal))
-                query.Add("vote_count.gte=200");
-
-            var builder = new StringBuilder($"discover/{type}?");
-            builder.Append(string.Join("&", query));
-            return builder.ToString();
-        }
+        [JsonPropertyName("logo_path")]
+        public string? LogoPath { get; set; }
     }
 }
