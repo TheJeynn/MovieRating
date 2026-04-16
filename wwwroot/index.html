@@ -203,6 +203,24 @@
                     <span class="tmdb-label">TMDB Score</span>
                 </div>
 
+                <div class="details-section" id="detailsSection">
+                    <div class="details-top">
+                        <div class="details-title">People & Credits</div>
+                        <div class="details-tabs">
+                            <button class="details-tab active" data-tab="cast" type="button">Cast</button>
+                            <button class="details-tab" data-tab="music" type="button">Music</button>
+                            <button class="details-tab" data-tab="creators" type="button">Directors & Writers</button>
+                        </div>
+                    </div>
+                    <div class="details-loading" id="detailsLoading">
+                        <div class="spinner-sm"></div>
+                        <span>Loading people and credits...</span>
+                    </div>
+                    <div class="details-panel active" id="detailsPanelCast" data-panel="cast"></div>
+                    <div class="details-panel" id="detailsPanelMusic" data-panel="music"></div>
+                    <div class="details-panel" id="detailsPanelCreators" data-panel="creators"></div>
+                </div>
+
                 <!-- ── WHERE TO WATCH ── -->
                 <div class="watch-section" id="watchSection">
                     <div class="watch-loading" id="watchLoading">
@@ -227,7 +245,7 @@
                         <span class="star" data-value="9">★</span>
                         <span class="star" data-value="10">★</span>
                     </div>
-                    <span class="star-score" id="ratingLabel">—</span>
+                    <span class="star-score" id="ratingLabel">Select a score</span>
                 </div>
 
                 <button class="btn-submit" id="submitRating" onclick="submitRating()">Save Rating</button>

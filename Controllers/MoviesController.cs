@@ -134,6 +134,39 @@ namespace MovieRating.Controllers
             });
         }
 
+        // GET: api/Movies/details/{id}?type=movie
+        [HttpGet("details/{id}")]
+        public async Task<IActionResult> GetDetails(int id, [FromQuery] string type = "movie")
+        {
+            var client = GetClient();
+            var normalizedType = type == "tv" ? "tv" : "movie";
+            var response = await client.GetAsync($"{normalizedType}/{id}?language=en-US&append_to_response=credits");
+
+            if (!response.IsSuccessStatusCode)
+                return BadRequest("TMDB API Error");
+
+            var data = await response.Content.ReadFromJsonAsync<TmdbDetailResponse>();
+            if (data == null)
+                return NotFound("Details not found.");
+
+            return Ok(new MovieDetailsDto
+            {
+                Id = data.Id,
+                Title = data.Title,
+                Name = data.Name,
+                Overview = data.Overview,
+                PosterPath = data.PosterPath,
+                BackdropPath = data.BackdropPath,
+                VoteAverage = data.VoteAverage,
+                ReleaseDate = data.ReleaseDate,
+                FirstAirDate = data.FirstAirDate,
+                MediaType = normalizedType,
+                Cast = BuildCastCredits(data.Credits?.Cast),
+                Music = BuildCrewCredits(data.Credits?.Crew, IsMusicCredit, GetMusicPriority),
+                Creators = BuildCrewCredits(data.Credits?.Crew, IsCreatorCredit, GetCreatorPriority)
+            });
+        }
+
         private HttpClient GetClient()
         {
             if (string.IsNullOrEmpty(_tmdbToken))
@@ -142,6 +175,132 @@ namespace MovieRating.Controllers
             client.DefaultRequestHeaders.Authorization =
                 new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", _tmdbToken);
             return client;
+        }
+
+        private static List<PersonCreditDto> BuildCastCredits(IEnumerable<TmdbCreditPerson>? cast)
+        {
+            return (cast ?? Enumerable.Empty<TmdbCreditPerson>())
+                .Where(person => !string.IsNullOrWhiteSpace(person.Name))
+                .OrderBy(person => person.Order ?? int.MaxValue)
+                .ThenBy(person => person.Name)
+                .Take(12)
+                .Select(person => new PersonCreditDto
+                {
+                    Id = person.Id,
+                    Name = person.Name!,
+                    Role = string.IsNullOrWhiteSpace(person.Character) ? "Cast" : person.Character,
+                    ProfilePath = person.ProfilePath
+                })
+                .ToList();
+        }
+
+        private static List<PersonCreditDto> BuildCrewCredits(
+            IEnumerable<TmdbCreditPerson>? crew,
+            Func<TmdbCreditPerson, bool> predicate,
+            Func<string?, int> rolePriority)
+        {
+            return (crew ?? Enumerable.Empty<TmdbCreditPerson>())
+                .Where(predicate)
+                .Where(person => !string.IsNullOrWhiteSpace(person.Name))
+                .GroupBy(person => person.Id > 0 ? person.Id.ToString() : person.Name!.Trim().ToLowerInvariant())
+                .Select(group =>
+                {
+                    var primary = group
+                        .OrderBy(person => rolePriority(person.Job))
+                        .ThenBy(person => person.Name)
+                        .First();
+
+                    var roles = group
+                        .Select(person => NormalizeRole(person.Job, person.Department))
+                        .Where(role => !string.IsNullOrWhiteSpace(role))
+                        .Distinct(StringComparer.OrdinalIgnoreCase)
+                        .OrderBy(role => rolePriority(role))
+                        .Take(3)
+                        .ToList();
+
+                    return new
+                    {
+                        Priority = roles.Select(rolePriority).DefaultIfEmpty(99).Min(),
+                        Credit = new PersonCreditDto
+                        {
+                            Id = primary.Id,
+                            Name = primary.Name!,
+                            Role = roles.Count > 0 ? string.Join(" | ", roles) : primary.Department,
+                            ProfilePath = primary.ProfilePath
+                        }
+                    };
+                })
+                .OrderBy(entry => entry.Priority)
+                .ThenBy(entry => entry.Credit.Name)
+                .Take(12)
+                .Select(entry => entry.Credit)
+                .ToList();
+        }
+
+        private static bool IsMusicCredit(TmdbCreditPerson person)
+        {
+            var job = person.Job ?? string.Empty;
+
+            return string.Equals(person.Department, "Sound", StringComparison.OrdinalIgnoreCase)
+                || job.Contains("Music", StringComparison.OrdinalIgnoreCase)
+                || job.Contains("Composer", StringComparison.OrdinalIgnoreCase)
+                || job.Contains("Song", StringComparison.OrdinalIgnoreCase)
+                || job.Contains("Theme", StringComparison.OrdinalIgnoreCase)
+                || job.Contains("Soundtrack", StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static bool IsCreatorCredit(TmdbCreditPerson person)
+        {
+            var job = person.Job ?? string.Empty;
+
+            return job.Contains("Director", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(person.Department, "Writing", StringComparison.OrdinalIgnoreCase)
+                || job.Equals("Writer", StringComparison.OrdinalIgnoreCase)
+                || job.Equals("Screenplay", StringComparison.OrdinalIgnoreCase)
+                || job.Equals("Story", StringComparison.OrdinalIgnoreCase)
+                || job.Equals("Novel", StringComparison.OrdinalIgnoreCase)
+                || job.Equals("Teleplay", StringComparison.OrdinalIgnoreCase)
+                || job.Equals("Creator", StringComparison.OrdinalIgnoreCase)
+                || job.Equals("Series Composition", StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static int GetMusicPriority(string? role)
+        {
+            return role?.Trim() switch
+            {
+                "Original Music Composer" => 0,
+                "Composer" => 1,
+                "Songs" => 2,
+                "Music Supervisor" => 3,
+                _ when role?.Contains("Theme", StringComparison.OrdinalIgnoreCase) == true => 4,
+                _ when role?.Contains("Song", StringComparison.OrdinalIgnoreCase) == true => 5,
+                _ => 10
+            };
+        }
+
+        private static int GetCreatorPriority(string? role)
+        {
+            return role?.Trim() switch
+            {
+                "Director" => 0,
+                "Writer" => 1,
+                "Screenplay" => 2,
+                "Creator" => 3,
+                "Series Composition" => 4,
+                "Story" => 5,
+                "Teleplay" => 6,
+                "Novel" => 7,
+                _ when role?.Contains("Director", StringComparison.OrdinalIgnoreCase) == true => 8,
+                _ => 12
+            };
+        }
+
+        private static string? NormalizeRole(string? job, string? department)
+        {
+            if (!string.IsNullOrWhiteSpace(job))
+                return job.Trim();
+
+            return string.IsNullOrWhiteSpace(department) ? null : department.Trim();
         }
     }
 
@@ -180,5 +339,71 @@ namespace MovieRating.Controllers
 
         [JsonPropertyName("logo_path")]
         public string? LogoPath { get; set; }
+    }
+
+    public class TmdbDetailResponse
+    {
+        [JsonPropertyName("id")]
+        public int Id { get; set; }
+
+        [JsonPropertyName("title")]
+        public string? Title { get; set; }
+
+        [JsonPropertyName("name")]
+        public string? Name { get; set; }
+
+        [JsonPropertyName("overview")]
+        public string? Overview { get; set; }
+
+        [JsonPropertyName("poster_path")]
+        public string? PosterPath { get; set; }
+
+        [JsonPropertyName("backdrop_path")]
+        public string? BackdropPath { get; set; }
+
+        [JsonPropertyName("vote_average")]
+        public double VoteAverage { get; set; }
+
+        [JsonPropertyName("release_date")]
+        public string? ReleaseDate { get; set; }
+
+        [JsonPropertyName("first_air_date")]
+        public string? FirstAirDate { get; set; }
+
+        [JsonPropertyName("credits")]
+        public TmdbCreditsResponse? Credits { get; set; }
+    }
+
+    public class TmdbCreditsResponse
+    {
+        [JsonPropertyName("cast")]
+        public List<TmdbCreditPerson>? Cast { get; set; }
+
+        [JsonPropertyName("crew")]
+        public List<TmdbCreditPerson>? Crew { get; set; }
+    }
+
+    public class TmdbCreditPerson
+    {
+        [JsonPropertyName("id")]
+        public int Id { get; set; }
+
+        [JsonPropertyName("name")]
+        public string? Name { get; set; }
+
+        [JsonPropertyName("profile_path")]
+        public string? ProfilePath { get; set; }
+
+        [JsonPropertyName("character")]
+        public string? Character { get; set; }
+
+        [JsonPropertyName("job")]
+        public string? Job { get; set; }
+
+        [JsonPropertyName("department")]
+        public string? Department { get; set; }
+
+        [JsonPropertyName("order")]
+        public int? Order { get; set; }
     }
 }

@@ -5,6 +5,7 @@ const MOVIES = `${API}/Movies`;
 const RECOMMEND = `${API}/Recommend`;
 const IMG = "https://image.tmdb.org/t/p/w500";
 const IMG_LOGO = "https://image.tmdb.org/t/p/w92";
+const IMG_PROFILE = "https://image.tmdb.org/t/p/w185";
 const IMG_BIG = "https://image.tmdb.org/t/p/original";
 
 // ── STATE ────────────────────────────────────────────────────────
@@ -22,6 +23,9 @@ let currentItem = null;
 let searchTimer = null;
 let genres = { movie: [], tv: [] };
 let genreMap = {};
+let ratingsList = [];
+let ratingsMap = new Map();
+let modalRequestKey = null;
 
 // Recommend state
 let recType = "movie";
@@ -36,12 +40,14 @@ let filterGenreIds = [];
 let advFilterOpen = false;
 
 // ── INIT ─────────────────────────────────────────────────────────
-document.addEventListener('DOMContentLoaded', () => {
+document.addEventListener('DOMContentLoaded', async () => {
     setupNavTabs();
     setupSearch();
     setupStars();
     setupSort();
     setupHamburger();
+    setupDetailsTabs();
+    await refreshRatingsState();
     loadView("trending");
 });
 
@@ -101,11 +107,11 @@ async function loadView(view, append = false) {
                 : await fetchJSON(`${MOVIES}/popular?type=tv&page=${currentPage}`); break;
             case "toprated": data = await fetchJSON(`${MOVIES}/toprated?type=movie&page=${currentPage}`); break;
             case "myratings":
-                const ratings = await fetchJSON(RATINGS);
-                renderMyRatings(ratings); return;
+                await refreshRatingsState();
+                renderMyRatings(ratingsList); return;
         }
 
-        const results = data?.results ?? [];
+        const results = (data?.results ?? []).filter(isSupportedMedia);
         totalPages = data?.total_pages ?? 1;
 
         if (!append) {
@@ -154,29 +160,41 @@ function renderGrid(items, append = false) {
 }
 
 function createCard(item) {
-    const title = item.title || item.name || "Unknown";
-    const score = item.vote_average ? item.vote_average.toFixed(1) : null;
-    const type = item.media_type === "tv" ? "tv" : "movie";
-    const year = (item.release_date || item.first_air_date || "").slice(0, 4);
-    const poster = item.poster_path
-        ? `${IMG}${item.poster_path}`
+    const normalized = normalizeItem(item);
+    const title = titleFor(normalized);
+    const score = normalized.vote_average ? normalized.vote_average.toFixed(1) : null;
+    const type = getItemMediaType(normalized);
+    const year = yearFor(normalized);
+    const userRating = getRatingForItem(normalized);
+    const poster = normalized.poster_path
+        ? `${IMG}${normalized.poster_path}`
         : "https://via.placeholder.com/300x450/1e1e2a/5a5a72?text=No+Image";
 
     const card = document.createElement('div');
-    card.className = 'movie-card';
+    card.className = `movie-card${userRating ? ' is-rated' : ''}`;
     card.innerHTML = `
         <div class="card-img-wrap">
             <img class="card-img" src="${poster}" alt="${escHtml(title)}" loading="lazy">
             <div class="card-hover">
-                <button class="card-rate-btn" onclick='openModal(${JSON.stringify(item)})'>⭐ Rate It</button>
+                <button class="card-rate-btn">${userRating ? `Update Rating (${userRating.score}/10)` : '⭐ Rate It'}</button>
             </div>
             <span class="card-badge ${type === 'tv' ? 'badge-tv' : 'badge-movie'}">${type === 'tv' ? 'TV' : 'MOVIE'}</span>
             ${score ? `<span class="card-score">★ ${score}</span>` : ''}
+            ${userRating ? `<span class="card-rated-pill">ALREADY RATED</span>` : ''}
         </div>
         <div class="card-body">
             <div class="card-title">${escHtml(title)}</div>
             ${year ? `<div class="card-year">${year}</div>` : ''}
+            ${userRating ? `<div class="card-user-score">Your Score: ${userRating.score}/10</div>` : ''}
         </div>`;
+
+    const open = () => openModal(normalized);
+    card.addEventListener('click', open);
+    card.querySelector('.card-rate-btn')?.addEventListener('click', event => {
+        event.stopPropagation();
+        open();
+    });
+
     return card;
 }
 
@@ -188,20 +206,8 @@ function renderMyRatings(ratings) {
     if (!ratings || ratings.length === 0) { showGridEmpty("You haven't rated anything yet. Start rating!"); return; }
     document.getElementById('resultCount').textContent = `${ratings.length} rated`;
     ratings.forEach((r, i) => {
-        const poster = r.posterPath ? `${IMG}${r.posterPath}` : "https://via.placeholder.com/300x450/1e1e2a/5a5a72?text=?";
-        const card = document.createElement('div');
-        card.className = 'movie-card';
+        const card = createCard(ratingToItem(r));
         card.style.animationDelay = `${Math.min(i * 25, 350)}ms`;
-        card.innerHTML = `
-            <div class="card-img-wrap">
-                <img class="card-img" src="${poster}" alt="${escHtml(r.movieTitle)}" loading="lazy">
-                <span class="card-badge badge-rated">RATED</span>
-                <span class="card-score">★ ${r.score}</span>
-            </div>
-            <div class="card-body">
-                <div class="card-title">${escHtml(r.movieTitle)}</div>
-                <div class="card-user-score">Your Score: ${r.score}/10</div>
-            </div>`;
         grid.appendChild(card);
     });
 }
@@ -210,17 +216,19 @@ function renderMyRatings(ratings) {
 function setHero(idx) {
     heroIndex = idx;
     const item = heroItems[idx]; if (!item) return;
-    const title = item.title || item.name || "Unknown";
-    const type = item.media_type === "tv" ? "TV SHOW" : "MOVIE";
-    const year = (item.release_date || item.first_air_date || "").slice(0, 4);
+    const title = titleFor(item);
+    const type = getItemMediaType(item) === "tv" ? "TV SHOW" : "MOVIE";
+    const year = yearFor(item);
     const score = item.vote_average?.toFixed(1);
     const bg = item.backdrop_path ? `${IMG_BIG}${item.backdrop_path}` : "";
+    const userRating = getRatingForItem(item);
 
     document.getElementById('heroBg').style.backgroundImage = bg ? `url(${bg})` : "none";
     document.getElementById('heroBadge').textContent = `${type} • TRENDING`;
     document.getElementById('heroTitle').textContent = title;
     document.getElementById('heroDesc').textContent = item.overview || "";
-    document.getElementById('heroMeta').innerHTML = `${year ? `<span>📅 ${year}</span>` : ''}${score ? `<span class="hero-score">★ ${score}</span>` : ''}`;
+    document.getElementById('heroMeta').innerHTML = `${year ? `<span>📅 ${year}</span>` : ''}${score ? `<span class="hero-score">★ ${score}</span>` : ''}${userRating ? `<span class="hero-score">Your ${userRating.score}/10</span>` : ''}`;
+    document.getElementById('heroRateBtn').textContent = userRating ? `Update Rating (${userRating.score}/10)` : '⭐ Rate This';
     document.getElementById('heroRateBtn').onclick = () => openModal(item);
     document.querySelectorAll('.hero-dot').forEach((d, i) => d.classList.toggle('active', i === idx));
 }
@@ -230,7 +238,11 @@ function renderHeroDots() {
         `<button class="hero-dot ${i === 0 ? 'active' : ''}" onclick="goHero(${i})"></button>`).join('');
 }
 function goHero(i) { clearInterval(heroTimer); setHero(i); startHeroTimer(); }
-function startHeroTimer() { clearInterval(heroTimer); heroTimer = setInterval(() => setHero((heroIndex + 1) % heroItems.length), 6000); }
+function startHeroTimer() {
+    clearInterval(heroTimer);
+    if (heroItems.length <= 1) return;
+    heroTimer = setInterval(() => setHero((heroIndex + 1) % heroItems.length), 6000);
+}
 function scrollToGrid() { document.querySelector('.content')?.scrollIntoView({ behavior: 'smooth' }); }
 
 // ── GENRES ───────────────────────────────────────────────────────
@@ -344,22 +356,29 @@ async function performSearch(query) {
         const data = await fetchJSON(`${MOVIES}/search?query=${encodeURIComponent(query)}`);
         const results = (data?.results || []).filter(r => r.media_type !== 'person').slice(0, 8);
         if (!results.length) { dd.innerHTML = `<div class="search-empty">No results for "${escHtml(query)}"</div>`; return; }
-        dd.innerHTML = results.map(item => {
-            const title = item.title || item.name || "Unknown";
-            const type = item.media_type === 'tv' ? 'TV Show' : 'Movie';
-            const year = (item.release_date || item.first_air_date || "").slice(0, 4);
-            const score = item.vote_average ? item.vote_average.toFixed(1) : "N/A";
-            const poster = item.poster_path ? `${IMG}${item.poster_path}` : "https://via.placeholder.com/40x56/1e1e2a/5a5a72?text=?";
-            return `
-                <div class="search-result-item" onclick='searchSelect(${JSON.stringify(item)})'>
-                    <img src="${poster}" alt="${escHtml(title)}">
-                    <div class="search-result-info">
-                        <h4>${escHtml(title)}</h4>
-                        <span>${type}${year ? ' • ' + year : ''}</span>
-                    </div>
-                    <span class="search-result-score">★ ${score}</span>
-                </div>`;
-        }).join('');
+        dd.innerHTML = "";
+        results.forEach(item => {
+            const normalized = normalizeItem(item);
+            const title = titleFor(normalized);
+            const type = getItemMediaType(normalized) === 'tv' ? 'TV Show' : 'Movie';
+            const year = yearFor(normalized);
+            const score = normalized.vote_average ? normalized.vote_average.toFixed(1) : "N/A";
+            const poster = normalized.poster_path ? `${IMG}${normalized.poster_path}` : "https://via.placeholder.com/40x56/1e1e2a/5a5a72?text=?";
+            const userRating = getRatingForItem(normalized);
+
+            const row = document.createElement('div');
+            row.className = 'search-result-item';
+            row.innerHTML = `
+                <img src="${poster}" alt="${escHtml(title)}">
+                <div class="search-result-info">
+                    <h4>${escHtml(title)}</h4>
+                    <span>${type}${year ? ' • ' + year : ''}</span>
+                    ${userRating ? `<div class="search-result-rated">Already rated ${userRating.score}/10</div>` : ''}
+                </div>
+                <span class="search-result-score">★ ${score}</span>`;
+            row.addEventListener('click', () => searchSelect(normalized));
+            dd.appendChild(row);
+        });
     } catch { dd.innerHTML = `<div class="search-empty">Search failed. Try again.</div>`; }
 }
 
@@ -370,51 +389,143 @@ function searchSelect(item) {
 }
 
 // ── MODAL ────────────────────────────────────────────────────────
+function setupDetailsTabs() {
+    document.querySelectorAll('.details-tab').forEach(btn => {
+        btn.addEventListener('click', () => selectDetailsTab(btn.dataset.tab));
+    });
+}
+
 function openModal(item) {
-    currentItem = item; selectedScore = 0;
-    const title = item.title || item.name || "Unknown";
-    const type = item.media_type === 'tv' ? 'TV SHOW' : 'MOVIE';
-    const year = (item.release_date || item.first_air_date || "").slice(0, 4);
-    const score = item.vote_average ? item.vote_average.toFixed(1) : "—";
-    const poster = item.poster_path ? `${IMG}${item.poster_path}` : "https://via.placeholder.com/480x210/1e1e2a/5a5a72?text=No+Image";
+    currentItem = normalizeItem(item);
+    if (!currentItem?.id) return;
 
-    document.getElementById('modalPoster').src = poster;
-    document.getElementById('modalBadge').textContent = type;
-    document.getElementById('modalTitle').textContent = title;
-    document.getElementById('modalYear').textContent = year;
-    document.getElementById('modalOverview').textContent = item.overview || "No description available.";
-    document.getElementById('modalTmdbScore').textContent = score;
-    document.getElementById('modalStatus').textContent = "";
-    document.getElementById('ratingLabel').textContent = "—";
-    document.getElementById('submitRating').disabled = false;
-    document.querySelectorAll('.star').forEach(s => s.classList.remove('active'));
-
-    // Reset watch section
-    document.getElementById('watchLoading').style.display = "flex";
-    document.getElementById('watchContent').style.display = "none";
-    document.getElementById('watchContent').innerHTML = "";
+    modalRequestKey = `${Date.now()}-${currentItem.id}-${getItemMediaType(currentItem)}`;
+    resetModalSections();
+    applyModalItemData(currentItem);
+    syncModalRatingState();
+    clearModalStatus();
 
     document.getElementById('modalOverlay').classList.add('show');
     document.body.style.overflow = 'hidden';
 
-    // Fetch watch providers async
-    const mediaType = item.media_type === 'tv' ? 'tv' : 'movie';
-    loadWatchProviders(item.id, mediaType);
+    const mediaType = getItemMediaType(currentItem);
+    loadItemDetails(currentItem.id, mediaType, modalRequestKey);
+    loadWatchProviders(currentItem.id, mediaType, modalRequestKey);
 }
 
 function closeModal() {
     document.getElementById('modalOverlay').classList.remove('show');
     document.body.style.overflow = '';
-    currentItem = null; selectedScore = 0;
+    currentItem = null;
+    selectedScore = 0;
+    modalRequestKey = null;
+    clearModalStatus();
+}
+
+function resetModalSections() {
+    selectDetailsTab('cast');
+    document.getElementById('detailsLoading').style.display = "flex";
+    document.getElementById('detailsPanelCast').innerHTML = "";
+    document.getElementById('detailsPanelMusic').innerHTML = "";
+    document.getElementById('detailsPanelCreators').innerHTML = "";
+    document.getElementById('watchLoading').style.display = "flex";
+    document.getElementById('watchContent').style.display = "none";
+    document.getElementById('watchContent').innerHTML = "";
+}
+
+function applyModalItemData(item) {
+    currentItem = normalizeItem({ ...currentItem, ...item });
+
+    const title = titleFor(currentItem);
+    const type = getItemMediaType(currentItem) === 'tv' ? 'TV SHOW' : 'MOVIE';
+    const year = yearFor(currentItem);
+    const score = currentItem.vote_average ? currentItem.vote_average.toFixed(1) : "—";
+    const poster = currentItem.backdrop_path
+        ? `${IMG_BIG}${currentItem.backdrop_path}`
+        : currentItem.poster_path
+            ? `${IMG}${currentItem.poster_path}`
+            : "https://via.placeholder.com/720x280/1e1e2a/5a5a72?text=No+Image";
+
+    document.getElementById('modalPoster').src = poster;
+    document.getElementById('modalPoster').alt = title;
+    document.getElementById('modalBadge').textContent = type;
+    document.getElementById('modalTitle').textContent = title;
+    document.getElementById('modalYear').textContent = year;
+    document.getElementById('modalOverview').textContent = currentItem.overview || "No description available.";
+    document.getElementById('modalTmdbScore').textContent = score;
+}
+
+function syncModalRatingState() {
+    const rating = getRatingForItem(currentItem);
+    selectedScore = rating?.score ?? 0;
+    updateStars(selectedScore);
+    document.getElementById('ratingLabel').textContent = selectedScore ? `${selectedScore} / 10` : "Select a score";
+    document.getElementById('submitRating').textContent = rating ? "Update Rating" : "Save Rating";
+    document.getElementById('submitRating').disabled = selectedScore === 0;
+}
+
+function selectDetailsTab(tab) {
+    document.querySelectorAll('.details-tab').forEach(button =>
+        button.classList.toggle('active', button.dataset.tab === tab));
+
+    document.querySelectorAll('.details-panel').forEach(panel =>
+        panel.classList.toggle('active', panel.dataset.panel === tab));
+}
+
+async function loadItemDetails(id, type, requestKey) {
+    try {
+        const data = await fetchJSON(`${MOVIES}/details/${id}?type=${type}`);
+        if (requestKey !== modalRequestKey) return;
+        applyModalItemData(data);
+        renderPeoplePanels(data);
+    } catch (err) {
+        console.error("Credits could not be rendered:", err);
+        if (requestKey !== modalRequestKey) return;
+        renderPeoplePanels(null);
+    }
+}
+
+function renderPeoplePanels(data) {
+    document.getElementById('detailsLoading').style.display = "none";
+    document.getElementById('detailsPanelCast').innerHTML = buildPeoplePanel(data?.cast, "Cast info is not available for this title.");
+    document.getElementById('detailsPanelMusic').innerHTML = buildPeoplePanel(data?.music, "No music credits were returned for this title.");
+    document.getElementById('detailsPanelCreators').innerHTML = buildPeoplePanel(data?.creators, "Director and writer info is not available for this title.");
+}
+
+function buildPeoplePanel(list, emptyMessage) {
+    if (!list || list.length === 0) {
+        return `<div class="details-empty">${escHtml(emptyMessage)}</div>`;
+    }
+
+    return `<div class="people-grid">${list.map(person => buildPersonCard(person)).join('')}</div>`;
+}
+
+function buildPersonCard(person) {
+    const name = person?.name || "Unknown";
+    const role = person?.role || "Crew";
+    const photo = person?.profilePath
+        ? `<img src="${IMG_PROFILE}${person.profilePath}" alt="${escHtml(name)}" loading="lazy">`
+        : `<div class="person-photo-fallback">${escHtml(initialsFor(name))}</div>`;
+
+    return `
+        <article class="person-card">
+            <div class="person-photo">${photo}</div>
+            <div class="person-meta">
+                <div class="person-name">${escHtml(name)}</div>
+                <div class="person-role">${escHtml(role)}</div>
+            </div>
+        </article>`;
 }
 
 // ── WATCH PROVIDERS ──────────────────────────────────────────────
-async function loadWatchProviders(id, type) {
+async function loadWatchProviders(id, type, requestKey) {
     try {
         const data = await fetchJSON(`${MOVIES}/providers/${id}?type=${type}`);
+        if (requestKey !== modalRequestKey) return;
         renderWatchProviders(data);
     } catch (err) {
         console.error("Watch providers could not be rendered:", err);
+        if (requestKey !== modalRequestKey) return;
         renderWatchProviders(null);
     }
 }
@@ -496,34 +607,57 @@ function setupStars() {
     const stars = document.querySelectorAll('.star');
     stars.forEach(star => {
         star.addEventListener('mouseover', () => {
-            const v = +star.dataset.value;
-            stars.forEach(s => s.classList.toggle('active', +s.dataset.value <= v));
+            updateStars(+star.dataset.value);
         });
         star.addEventListener('mouseout', () => {
-            stars.forEach(s => s.classList.toggle('active', +s.dataset.value <= selectedScore));
+            updateStars(selectedScore);
         });
         star.addEventListener('click', () => {
             selectedScore = +star.dataset.value;
             document.getElementById('ratingLabel').textContent = `${selectedScore} / 10`;
-            stars.forEach(s => s.classList.toggle('active', +s.dataset.value <= selectedScore));
+            updateStars(selectedScore);
+            document.getElementById('submitRating').disabled = false;
+            clearModalStatus();
         });
+    });
+}
+
+function updateStars(value) {
+    document.querySelectorAll('.star').forEach(star => {
+        star.classList.toggle('active', +star.dataset.value <= value);
     });
 }
 
 // ── SUBMIT RATING ────────────────────────────────────────────────
 async function submitRating() {
-    if (!currentItem || selectedScore === 0) {
-        document.getElementById('modalStatus').textContent = "⚠️ Please select a score first."; return;
-    }
+    if (!currentItem || selectedScore === 0) return;
+
     const btn = document.getElementById('submitRating');
     btn.disabled = true;
-    document.getElementById('modalStatus').textContent = "Saving...";
-    const payload = { tmdbId: currentItem.id, score: selectedScore, movieTitle: currentItem.title || currentItem.name || "Unknown", posterPath: currentItem.poster_path || "", mediaType: currentItem.media_type || "movie" };
+    clearModalStatus();
+    const payload = {
+        tmdbId: currentItem.id,
+        score: selectedScore,
+        movieTitle: titleFor(currentItem),
+        posterPath: currentItem.poster_path || "",
+        mediaType: getItemMediaType(currentItem)
+    };
+
     try {
         const res = await fetch(RATINGS, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
-        if (res.ok) { document.getElementById('modalStatus').textContent = "✅ Rating saved!"; setTimeout(closeModal, 1000); }
-        else { const err = await res.text(); document.getElementById('modalStatus').textContent = `❌ ${err}`; btn.disabled = false; }
-    } catch { document.getElementById('modalStatus').textContent = "❌ Could not connect to server."; btn.disabled = false; }
+        if (res.ok) {
+            closeModal();
+            await refreshRatingsState(true);
+            return;
+        }
+
+        const err = await res.text();
+        setModalStatus(err || "Could not save rating.");
+    } catch {
+        setModalStatus("Could not connect to server.");
+    } finally {
+        if (currentItem) btn.disabled = selectedScore === 0;
+    }
 }
 
 // ── RECOMMEND ────────────────────────────────────────────────────
@@ -565,7 +699,9 @@ async function findRecommendation() {
     document.getElementById('recError').style.display = "none";
     try {
         const item = await fetchJSON(RECOMMEND, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ type: recType, genreIds: recSelectedGenres, excludeIds: recExcludeIds }) });
-        recCurrentItem = item; recExcludeIds.push(item.id); showRecCard(item);
+        recCurrentItem = normalizeItem({ ...item, media_type: item.mediaType || item.media_type });
+        recExcludeIds.push(recCurrentItem.id);
+        showRecCard(recCurrentItem);
     } catch {
         document.getElementById('recLoading').style.display = "none";
         document.getElementById('recError').style.display = "block";
@@ -574,13 +710,16 @@ async function findRecommendation() {
 }
 
 function showRecCard(item) {
-    const title = item.title || item.name || "Unknown";
-    const type = item.mediaType === "tv" ? "TV SHOW" : "MOVIE";
-    const year = (item.releaseDate || item.firstAirDate || item.release_date || item.first_air_date || "").slice(0, 4);
-    const score = item.voteAverage || item.vote_average;
-    const poster = item.posterPath || item.poster_path;
-    const overview = item.overview || "No description available.";
-    const gids = item.genreIds || item.genre_ids || [];
+    const normalized = normalizeItem(item);
+    recCurrentItem = normalized;
+    const title = titleFor(normalized);
+    const type = getItemMediaType(normalized) === "tv" ? "TV SHOW" : "MOVIE";
+    const year = yearFor(normalized);
+    const score = normalized.vote_average;
+    const poster = normalized.poster_path;
+    const overview = normalized.overview || "No description available.";
+    const gids = normalized.genre_ids || item.genreIds || [];
+    const userRating = getRatingForItem(normalized);
 
     document.getElementById('recPoster').src = poster ? `${IMG}${poster}` : "https://via.placeholder.com/260x380/1e1e2a/5a5a72?text=?";
     document.getElementById('recBadge').textContent = type;
@@ -589,17 +728,58 @@ function showRecCard(item) {
     document.getElementById('recOverview').textContent = overview;
     document.getElementById('recScore').textContent = score ? `★ ${(+score).toFixed(1)}` : "";
     document.getElementById('recGenreTags').innerHTML = gids.map(id => `<span class="rec-genre-tag">${genreMap[id] || id}</span>`).join('');
-    document.getElementById('recRateBtn').onclick = () => openModal({ id: item.id, title: item.title, name: item.name, overview: item.overview, poster_path: poster, vote_average: score, release_date: item.releaseDate || item.release_date, first_air_date: item.firstAirDate || item.first_air_date, media_type: item.mediaType || "movie" });
+    document.getElementById('recRateBtn').textContent = userRating ? `Update Rating (${userRating.score}/10)` : '⭐ Rate This';
+    document.getElementById('recRateBtn').onclick = () => openModal(normalized);
     document.getElementById('recLoading').style.display = "none";
     document.getElementById('recCard').style.display = "block";
 }
 
 function skipRecommendation() { findRecommendation(); }
-function markWatchedAndSkip() { if (recCurrentItem) recExcludeIds.push(recCurrentItem.id); findRecommendation(); }
+function markWatchedAndSkip() {
+    if (recCurrentItem && !recExcludeIds.includes(recCurrentItem.id)) recExcludeIds.push(recCurrentItem.id);
+    findRecommendation();
+}
 
 // ── HAMBURGER ────────────────────────────────────────────────────
 function setupHamburger() {
     document.getElementById('hamburger').addEventListener('click', () => document.getElementById('mobileMenu').classList.toggle('open'));
+}
+
+// ── RATINGS ──────────────────────────────────────────────────────
+async function refreshRatingsState(shouldRefreshUi = false) {
+    try {
+        const ratings = await fetchJSON(RATINGS);
+        ratingsList = Array.isArray(ratings) ? ratings : [];
+        ratingsMap = new Map(ratingsList.map(rating => [buildRatingKey(rating.tmdbId, rating.mediaType), rating]));
+    } catch (err) {
+        console.error("Ratings could not be loaded:", err);
+        ratingsList = [];
+        ratingsMap = new Map();
+    }
+
+    if (shouldRefreshUi) refreshVisibleRatedState();
+}
+
+function refreshVisibleRatedState() {
+    if (currentView === "myratings") {
+        renderMyRatings(ratingsList);
+        return;
+    }
+
+    if (allItems.length > 0) renderGrid(getFilteredItems());
+    if (heroItems.length > 0) setHero(Math.min(heroIndex, heroItems.length - 1));
+    if (recCurrentItem) showRecCard(recCurrentItem);
+}
+
+function getRatingForItem(item) {
+    if (!item) return null;
+    const id = item.id ?? item.tmdbId;
+    if (!id) return null;
+    return ratingsMap.get(buildRatingKey(id, getItemMediaType(item))) ?? null;
+}
+
+function buildRatingKey(tmdbId, mediaType) {
+    return `${normalizeMediaType(mediaType)}:${tmdbId}`;
 }
 
 // ── HELPERS ──────────────────────────────────────────────────────
@@ -613,8 +793,80 @@ function showGridLoading() {
     document.getElementById('loadMoreWrap').classList.remove('show');
 }
 function showGridEmpty(msg) {
-    document.getElementById('movieGrid').innerHTML = `<div class="grid-empty"><h3>${msg}</h3></div>`;
+    document.getElementById('movieGrid').innerHTML = `<div class="grid-empty"><h3>${escHtml(msg)}</h3></div>`;
 }
 function escHtml(str) {
     return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
+function titleFor(item) {
+    return item?.title || item?.name || item?.movieTitle || "Unknown";
+}
+
+function yearFor(item) {
+    return (item?.release_date || item?.first_air_date || item?.releaseDate || item?.firstAirDate || "").slice(0, 4);
+}
+
+function normalizeMediaType(type) {
+    return type === "tv" ? "tv" : "movie";
+}
+
+function getItemMediaType(item) {
+    const rawType = item?.media_type || item?.mediaType;
+    if (rawType === "tv") return "tv";
+    if (rawType === "movie") return "movie";
+    if (item?.first_air_date || item?.firstAirDate || (!item?.title && item?.name)) return "tv";
+    return "movie";
+}
+
+function normalizeItem(item) {
+    if (!item) return null;
+
+    return {
+        ...item,
+        id: item.id ?? item.tmdbId,
+        title: item.title ?? item.movieTitle ?? null,
+        name: item.name ?? null,
+        overview: item.overview ?? null,
+        poster_path: item.poster_path ?? item.posterPath ?? null,
+        backdrop_path: item.backdrop_path ?? item.backdropPath ?? null,
+        vote_average: item.vote_average ?? item.voteAverage ?? 0,
+        release_date: item.release_date ?? item.releaseDate ?? null,
+        first_air_date: item.first_air_date ?? item.firstAirDate ?? null,
+        genre_ids: item.genre_ids ?? item.genreIds ?? [],
+        media_type: getItemMediaType(item)
+    };
+}
+
+function ratingToItem(rating) {
+    return normalizeItem({
+        id: rating.tmdbId,
+        title: rating.mediaType === "movie" ? rating.movieTitle : null,
+        name: rating.mediaType === "tv" ? rating.movieTitle : null,
+        poster_path: rating.posterPath,
+        media_type: rating.mediaType
+    });
+}
+
+function isSupportedMedia(item) {
+    return !item?.media_type || item.media_type === "movie" || item.media_type === "tv";
+}
+
+function initialsFor(name) {
+    return String(name)
+        .split(' ')
+        .filter(Boolean)
+        .slice(0, 2)
+        .map(part => part[0]?.toUpperCase() || '')
+        .join('') || '?';
+}
+
+function setModalStatus(message = "") {
+    const status = document.getElementById('modalStatus');
+    status.textContent = message;
+    status.classList.toggle('show', Boolean(message));
+}
+
+function clearModalStatus() {
+    setModalStatus("");
 }
