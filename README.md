@@ -6,7 +6,7 @@ Real-time Trending Data: Fetches the latest movies and series from the TMDB API.
 
 Secure Configuration: Uses a .env file to hide sensitive API keys and Database credentials from GitHub.
 
-Modern UI: A clean, responsive "Turquoise & Dark" themed interface.
+Modern UI: A clean, responsive "Dark" themed interface.
 
 Search Functionality: Instant client-side filtering to find specific titles.
 
