@@ -70,6 +70,7 @@ Important:
 ## Running the Application
 
 You can run the project with either Visual Studio or the .NET CLI.
+Also you need to setup 'Docker Desktop' to access Database
 
 ### Option 1: Visual Studio
 
