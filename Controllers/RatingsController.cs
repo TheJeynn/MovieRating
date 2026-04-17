@@ -1,4 +1,6 @@
-﻿using Microsoft.AspNetCore.Mvc;
+using System.Security.Claims;
+using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using MovieRating.Data;
 using MovieRating.Models;
@@ -7,6 +9,7 @@ namespace MovieRating.Controllers
 {
     [Route("api/[controller]")]
     [ApiController]
+    [Authorize]
     public class RatingsController : ControllerBase
     {
         private readonly AppDbContext _context;
@@ -22,13 +25,18 @@ namespace MovieRating.Controllers
         [HttpGet]
         public async Task<ActionResult<IEnumerable<Rating>>> GetRatings()
         {
+            var userId = GetCurrentUserId();
+            if (userId == null)
+                return Unauthorized();
+
             var ratings = await _context.Ratings
-                .OrderByDescending(r => r.RatedAt)
-                .ThenByDescending(r => r.Id)
+                .Where(rating => rating.UserId == userId.Value)
+                .OrderByDescending(rating => rating.RatedAt)
+                .ThenByDescending(rating => rating.Id)
                 .ToListAsync();
 
             return ratings
-                .GroupBy(r => new { r.TmdbId, r.MediaType })
+                .GroupBy(rating => new { rating.TmdbId, rating.MediaType })
                 .Select(group => group.First())
                 .ToList();
         }
@@ -37,12 +45,19 @@ namespace MovieRating.Controllers
         [HttpGet("{id}")]
         public async Task<ActionResult<Rating>> GetRating(int id)
         {
-            var rating = await _context.Ratings.FindAsync(id);
+            var userId = GetCurrentUserId();
+            if (userId == null)
+                return Unauthorized();
+
+            var rating = await _context.Ratings
+                .FirstOrDefaultAsync(candidate => candidate.Id == id && candidate.UserId == userId.Value);
+
             return rating == null ? NotFound() : rating;
         }
 
         // GET: api/Ratings/trending
         [HttpGet("trending")]
+        [AllowAnonymous]
         public async Task<ActionResult> GetTrending()
         {
             var tmdbToken = Environment.GetEnvironmentVariable("TMDB_KEY") ?? string.Empty;
@@ -67,12 +82,16 @@ namespace MovieRating.Controllers
         [HttpPost]
         public async Task<ActionResult<Rating>> PostRating(Rating rating)
         {
+            var userId = GetCurrentUserId();
+            if (userId == null)
+                return Unauthorized();
+
             var tmdbToken = Environment.GetEnvironmentVariable("TMDB_KEY") ?? string.Empty;
 
             if (string.IsNullOrEmpty(tmdbToken))
                 return BadRequest("TMDB_KEY not found in environment.");
 
-            bool isTv = string.Equals(rating.MediaType, "tv", StringComparison.OrdinalIgnoreCase);
+            var isTv = string.Equals(rating.MediaType, "tv", StringComparison.OrdinalIgnoreCase);
             rating.MediaType = isTv ? "tv" : "movie";
 
             var client = _clientFactory.CreateClient();
@@ -117,6 +136,7 @@ namespace MovieRating.Controllers
             if (string.IsNullOrEmpty(movieTitle))
                 return BadRequest("Could not fetch title from TMDB. Check TMDB_KEY or TmdbId.");
 
+            rating.UserId = userId.Value;
             rating.MovieTitle = movieTitle;
             rating.PosterPath = posterPath;
             rating.RatedAt = DateTime.UtcNow;
@@ -124,9 +144,11 @@ namespace MovieRating.Controllers
             try
             {
                 var existingRating = await _context.Ratings
-                    .Where(r => r.TmdbId == rating.TmdbId && r.MediaType == rating.MediaType)
-                    .OrderByDescending(r => r.RatedAt)
-                    .ThenByDescending(r => r.Id)
+                    .Where(existing => existing.UserId == userId.Value
+                        && existing.TmdbId == rating.TmdbId
+                        && existing.MediaType == rating.MediaType)
+                    .OrderByDescending(existing => existing.RatedAt)
+                    .ThenByDescending(existing => existing.Id)
                     .FirstOrDefaultAsync();
 
                 if (existingRating == null)
@@ -156,15 +178,21 @@ namespace MovieRating.Controllers
         [HttpDelete("{id}")]
         public async Task<IActionResult> DeleteRating(int id)
         {
+            var userId = GetCurrentUserId();
+            if (userId == null)
+                return Unauthorized();
+
             var rating = await _context.Ratings
                 .AsNoTracking()
-                .FirstOrDefaultAsync(r => r.Id == id);
+                .FirstOrDefaultAsync(candidate => candidate.Id == id && candidate.UserId == userId.Value);
 
             if (rating == null)
                 return NotFound("Rating not found.");
 
             var ratingsToDelete = await _context.Ratings
-                .Where(r => r.TmdbId == rating.TmdbId && r.MediaType == rating.MediaType)
+                .Where(candidate => candidate.UserId == userId.Value
+                    && candidate.TmdbId == rating.TmdbId
+                    && candidate.MediaType == rating.MediaType)
                 .ToListAsync();
 
             if (ratingsToDelete.Count == 0)
@@ -174,6 +202,12 @@ namespace MovieRating.Controllers
             await _context.SaveChangesAsync();
 
             return NoContent();
+        }
+
+        private int? GetCurrentUserId()
+        {
+            var rawUserId = User.FindFirstValue(ClaimTypes.NameIdentifier);
+            return int.TryParse(rawUserId, out var userId) ? userId : null;
         }
     }
 

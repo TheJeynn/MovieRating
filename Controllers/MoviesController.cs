@@ -1,5 +1,6 @@
 using Microsoft.AspNetCore.Mvc;
 using MovieRating.DTOs;
+using MovieRating.Services;
 using System.Net.Http.Json;
 using System.Text.Json.Serialization;
 
@@ -10,48 +11,49 @@ namespace MovieRating.Controllers
     public class MoviesController : ControllerBase
     {
         private readonly IHttpClientFactory _httpClientFactory;
+        private readonly TmdbContentRatingService _contentRatingService;
         private readonly string _tmdbToken;
 
-        public MoviesController(IHttpClientFactory httpClientFactory)
+        public MoviesController(IHttpClientFactory httpClientFactory, TmdbContentRatingService contentRatingService)
         {
             _httpClientFactory = httpClientFactory;
+            _contentRatingService = contentRatingService;
             _tmdbToken = Environment.GetEnvironmentVariable("TMDB_KEY") ?? string.Empty;
         }
 
         // GET: api/Movies/trending?page=1
         [HttpGet("trending")]
-        public async Task<IActionResult> GetTrending([FromQuery] int page = 1)
+        public async Task<IActionResult> GetTrending([FromQuery] int page = 1, [FromQuery] bool includeContentRatings = false)
         {
             var client = GetClient();
-            var response = await client.GetAsync($"trending/all/day?language=en-US&page={page}");
-            if (!response.IsSuccessStatusCode) return BadRequest("TMDB API Error");
-            return Content(await response.Content.ReadAsStringAsync(), "application/json");
+            var data = await FetchListAsync(
+                client,
+                $"trending/all/day?language=en-US&page={page}",
+                defaultType: null,
+                includeContentRatings,
+                HttpContext.RequestAborted);
+
+            return data == null ? BadRequest("TMDB API Error") : Ok(data);
         }
 
         // GET: api/Movies/popular?type=movie&page=1
         [HttpGet("popular")]
-        public async Task<IActionResult> GetPopular([FromQuery] string type = "movie", [FromQuery] int page = 1)
+        public async Task<IActionResult> GetPopular([FromQuery] string type = "movie", [FromQuery] int page = 1, [FromQuery] bool includeContentRatings = false)
         {
             var client = GetClient();
             var url = type == "tv" ? $"tv/popular?language=en-US&page={page}" : $"movie/popular?language=en-US&page={page}";
-            var response = await client.GetAsync(url);
-            if (!response.IsSuccessStatusCode) return BadRequest("TMDB API Error");
-            var data = await response.Content.ReadFromJsonAsync<TmdbRawResponse>();
-            if (data?.Results != null) foreach (var r in data.Results) r.MediaType = type;
-            return Ok(data);
+            var data = await FetchListAsync(client, url, type, includeContentRatings, HttpContext.RequestAborted);
+            return data == null ? BadRequest("TMDB API Error") : Ok(data);
         }
 
         // GET: api/Movies/toprated?type=movie&page=1
         [HttpGet("toprated")]
-        public async Task<IActionResult> GetTopRated([FromQuery] string type = "movie", [FromQuery] int page = 1)
+        public async Task<IActionResult> GetTopRated([FromQuery] string type = "movie", [FromQuery] int page = 1, [FromQuery] bool includeContentRatings = false)
         {
             var client = GetClient();
             var url = type == "tv" ? $"tv/top_rated?language=en-US&page={page}" : $"movie/top_rated?language=en-US&page={page}";
-            var response = await client.GetAsync(url);
-            if (!response.IsSuccessStatusCode) return BadRequest("TMDB API Error");
-            var data = await response.Content.ReadFromJsonAsync<TmdbRawResponse>();
-            if (data?.Results != null) foreach (var r in data.Results) r.MediaType = type;
-            return Ok(data);
+            var data = await FetchListAsync(client, url, type, includeContentRatings, HttpContext.RequestAborted);
+            return data == null ? BadRequest("TMDB API Error") : Ok(data);
         }
 
         // GET: api/Movies/search?query=batman&page=1
@@ -78,17 +80,14 @@ namespace MovieRating.Controllers
 
         // GET: api/Movies/discover?type=movie&genreId=28&page=1
         [HttpGet("discover")]
-        public async Task<IActionResult> Discover([FromQuery] string type = "movie", [FromQuery] int? genreId = null, [FromQuery] int page = 1)
+        public async Task<IActionResult> Discover([FromQuery] string type = "movie", [FromQuery] int? genreId = null, [FromQuery] int page = 1, [FromQuery] bool includeContentRatings = false)
         {
             var client = GetClient();
             var url = genreId.HasValue
                 ? $"discover/{type}?with_genres={genreId}&language=en-US&page={page}&sort_by=popularity.desc"
                 : $"{type}/popular?language=en-US&page={page}";
-            var response = await client.GetAsync(url);
-            if (!response.IsSuccessStatusCode) return BadRequest("TMDB API Error");
-            var data = await response.Content.ReadFromJsonAsync<TmdbRawResponse>();
-            if (data?.Results != null) foreach (var r in data.Results) r.MediaType = type;
-            return Ok(data);
+            var data = await FetchListAsync(client, url, type, includeContentRatings, HttpContext.RequestAborted);
+            return data == null ? BadRequest("TMDB API Error") : Ok(data);
         }
 
         // GET: api/Movies/providers/{id}?type=movie
@@ -175,6 +174,65 @@ namespace MovieRating.Controllers
             client.DefaultRequestHeaders.Authorization =
                 new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", _tmdbToken);
             return client;
+        }
+
+        private async Task<TmdbRawResponse?> FetchListAsync(
+            HttpClient client,
+            string url,
+            string? defaultType,
+            bool includeContentRatings,
+            CancellationToken cancellationToken)
+        {
+            var response = await client.GetAsync(url, cancellationToken);
+            if (!response.IsSuccessStatusCode)
+                return null;
+
+            var data = await response.Content.ReadFromJsonAsync<TmdbRawResponse>(cancellationToken: cancellationToken);
+            if (data?.Results == null)
+                return data;
+
+            foreach (var item in data.Results)
+            {
+                if (string.IsNullOrWhiteSpace(item.MediaType) && !string.IsNullOrWhiteSpace(defaultType))
+                    item.MediaType = NormalizeMediaType(defaultType);
+            }
+
+            if (includeContentRatings)
+                await EnrichContentRatingsAsync(client, data.Results, defaultType, cancellationToken);
+
+            return data;
+        }
+
+        private async Task EnrichContentRatingsAsync(
+            HttpClient client,
+            IEnumerable<MovieDto> items,
+            string? fallbackType,
+            CancellationToken cancellationToken)
+        {
+            var groupedItems = items
+                .Where(item => item.Id > 0)
+                .GroupBy(item => NormalizeMediaType(item.MediaType ?? fallbackType))
+                .Where(group => group.Key != null);
+
+            foreach (var group in groupedItems)
+            {
+                await _contentRatingService.EnrichContentRatingsAsync(
+                    client,
+                    group.Key!,
+                    group,
+                    cancellationToken);
+            }
+        }
+
+        private static string? NormalizeMediaType(string? type)
+        {
+            if (string.Equals(type, "tv", StringComparison.OrdinalIgnoreCase))
+                return "tv";
+
+            if (string.Equals(type, "movie", StringComparison.OrdinalIgnoreCase))
+                return "movie";
+
+            return null;
         }
 
         private static List<PersonCreditDto> BuildCastCredits(IEnumerable<TmdbCreditPerson>? cast)

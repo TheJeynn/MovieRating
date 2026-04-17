@@ -1,5 +1,6 @@
 ﻿// ── CONFIG ───────────────────────────────────────────────────────
-const API = "http://localhost:5128/api";
+const API = resolveApiBase();
+const AUTH = `${API}/Auth`;
 const RATINGS = `${API}/Ratings`;
 const MOVIES = `${API}/Movies`;
 const RECOMMEND = `${API}/Recommend`;
@@ -26,6 +27,8 @@ let genreMap = {};
 let ratingsList = [];
 let ratingsMap = new Map();
 let modalRequestKey = null;
+let currentUser = null;
+let authMode = "login";
 
 // Recommend state
 let recType = "movie";
@@ -37,6 +40,8 @@ let recCurrentItem = null;
 let filterMinRating = 0;
 let filterMaxRating = 10;
 let filterGenreIds = [];
+let filterAgeRating = "";
+let appliedAgeRating = "";
 let advFilterOpen = false;
 
 // ── INIT ─────────────────────────────────────────────────────────
@@ -47,9 +52,210 @@ document.addEventListener('DOMContentLoaded', async () => {
     setupSort();
     setupHamburger();
     setupDetailsTabs();
-    await refreshRatingsState();
-    loadView("trending");
+    setupAuth();
+    updateUserUi();
+    loadView(currentView);
+
+    const user = await fetchCurrentUser();
+    if (user) await handleSignedIn(user);
 });
+
+// ── AUTH ─────────────────────────────────────────────────────────
+function setupAuth() {
+    document.getElementById('loginForm').addEventListener('submit', handleLoginSubmit);
+    document.getElementById('registerForm').addEventListener('submit', handleRegisterSubmit);
+    document.getElementById('showRegisterBtn').addEventListener('click', () => showAuthScreen("register"));
+    document.getElementById('showLoginBtn').addEventListener('click', () => showAuthScreen("login"));
+    document.getElementById('loginTriggerBtn')?.addEventListener('click', () => showAuthScreen("login"));
+    document.getElementById('mobileLoginBtn')?.addEventListener('click', () => showAuthScreen("login"));
+    document.getElementById('authCloseBtn')?.addEventListener('click', hideAuthScreen);
+    document.getElementById('logoutBtn')?.addEventListener('click', logout);
+    document.getElementById('mobileLogoutBtn')?.addEventListener('click', logout);
+    document.getElementById('authShell').addEventListener('click', event => {
+        if (event.target.id === 'authShell') hideAuthScreen();
+    });
+}
+
+async function handleLoginSubmit(event) {
+    event.preventDefault();
+
+    const username = document.getElementById('loginUsername').value.trim();
+    const password = document.getElementById('loginPassword').value;
+
+    if (!username || !password) {
+        setAuthStatus("login", "Please enter your username and password.");
+        return;
+    }
+
+    setAuthStatus("login", "Signing you in...", false);
+
+    try {
+        const user = await fetchJSON(`${AUTH}/login`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ username, password })
+        });
+
+        await handleSignedIn(user);
+    } catch (err) {
+        setAuthStatus("login", await readFriendlyError(err, "Could not sign you in."));
+    }
+}
+
+async function handleRegisterSubmit(event) {
+    event.preventDefault();
+
+    const username = document.getElementById('registerUsername').value.trim();
+    const password = document.getElementById('registerPassword').value;
+    const confirmPassword = document.getElementById('registerConfirmPassword').value;
+
+    if (!username || !password || !confirmPassword) {
+        setAuthStatus("register", "Please fill in all fields.");
+        return;
+    }
+
+    if (password !== confirmPassword) {
+        setAuthStatus("register", "Passwords do not match.");
+        return;
+    }
+
+    setAuthStatus("register", "Creating your profile...", false);
+
+    try {
+        const user = await fetchJSON(`${AUTH}/register`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ username, password })
+        });
+
+        await handleSignedIn(user);
+    } catch (err) {
+        setAuthStatus("register", await readFriendlyError(err, "Could not create your account."));
+    }
+}
+
+async function fetchCurrentUser() {
+    try {
+        return await fetchJSON(`${AUTH}/me`);
+    } catch (err) {
+        if (String(err.message).includes("HTTP 401")) return null;
+        console.error("Auth session could not be loaded:", err);
+        return null;
+    }
+}
+
+async function handleSignedIn(user) {
+    currentUser = user;
+    document.getElementById('mobileMenu').classList.remove('open');
+    updateUserUi();
+    hideAuthScreen();
+    clearAuthStatus();
+    resetAuthForms();
+    await refreshRatingsState(true);
+}
+
+function handleSignedOut(message = "") {
+    currentUser = null;
+    ratingsList = [];
+    ratingsMap = new Map();
+    currentItem = null;
+    selectedScore = 0;
+    closeModal();
+    document.getElementById('mobileMenu').classList.remove('open');
+    updateUserUi();
+    if (currentView === "myratings") {
+        switchView("trending");
+    } else {
+        refreshVisibleRatedState();
+    }
+
+    if (message) showAuthScreen("login", message);
+    else hideAuthScreen();
+}
+
+function showAuthScreen(mode, message = "") {
+    authMode = mode;
+    document.getElementById('authShell').classList.add('show');
+    document.body.style.overflow = 'hidden';
+    document.querySelectorAll('.auth-panel').forEach(panel =>
+        panel.classList.toggle('active', panel.dataset.authPanel === mode));
+
+    clearAuthStatus();
+    if (message) setAuthStatus(mode, message);
+}
+
+function hideAuthScreen() {
+    document.getElementById('authShell').classList.remove('show');
+    document.body.style.overflow = '';
+    clearAuthStatus();
+}
+
+async function logout() {
+    try {
+        await fetch(`${AUTH}/logout`, withCredentials({ method: "POST" }));
+    } catch (err) {
+        console.error("Logout failed:", err);
+    }
+
+    handleSignedOut();
+}
+
+function updateUserUi() {
+    const navGuest = document.getElementById('navGuest');
+    const navUser = document.getElementById('navUser');
+    const mobileGuest = document.getElementById('mobileGuest');
+    const mobileAccount = document.getElementById('mobileAccount');
+    if (!currentUser) {
+        navGuest.classList.add('show');
+        navUser.classList.remove('show');
+        mobileGuest.classList.add('show');
+        mobileAccount.classList.remove('show');
+        document.getElementById('navUserName').textContent = "";
+        document.getElementById('mobileUserName').textContent = "";
+        return;
+    }
+
+    navGuest.classList.remove('show');
+    document.getElementById('navUserName').textContent = currentUser.username;
+    mobileGuest.classList.remove('show');
+    document.getElementById('mobileUserName').textContent = currentUser.username;
+    navUser.classList.add('show');
+    mobileAccount.classList.add('show');
+}
+
+function setAuthStatus(mode, message, isError = true) {
+    const status = document.getElementById(mode === "register" ? 'registerStatus' : 'loginStatus');
+    status.textContent = message;
+    status.classList.toggle('show', Boolean(message));
+    status.classList.toggle('error', isError && Boolean(message));
+    status.classList.toggle('success', !isError && Boolean(message));
+}
+
+function clearAuthStatus() {
+    ['loginStatus', 'registerStatus'].forEach(id => {
+        const el = document.getElementById(id);
+        el.textContent = "";
+        el.classList.remove('show', 'error', 'success');
+    });
+}
+
+function resetAuthForms() {
+    document.getElementById('loginForm').reset();
+    document.getElementById('registerForm').reset();
+}
+
+async function readFriendlyError(err, fallback) {
+    if (err?.response) {
+        try {
+            const text = await err.response.text();
+            return text || fallback;
+        } catch {
+            return fallback;
+        }
+    }
+
+    return fallback;
+}
 
 // ── NAV ──────────────────────────────────────────────────────────
 function setupNavTabs() {
@@ -97,16 +303,24 @@ async function loadView(view, append = false) {
     if (!append) showGridLoading();
     try {
         let data;
+        const includeContentRatings = shouldIncludeContentRatings();
         switch (view) {
-            case "trending": data = await fetchJSON(`${MOVIES}/trending?page=${currentPage}`); break;
+            case "trending": data = await fetchJSON(`${MOVIES}/trending?page=${currentPage}${includeContentRatings ? '&includeContentRatings=true' : ''}`); break;
             case "movies": data = currentGenre
-                ? await fetchJSON(`${MOVIES}/discover?type=movie&genreId=${currentGenre}&page=${currentPage}`)
-                : await fetchJSON(`${MOVIES}/popular?type=movie&page=${currentPage}`); break;
+                ? await fetchJSON(`${MOVIES}/discover?type=movie&genreId=${currentGenre}&page=${currentPage}${includeContentRatings ? '&includeContentRatings=true' : ''}`)
+                : await fetchJSON(`${MOVIES}/popular?type=movie&page=${currentPage}${includeContentRatings ? '&includeContentRatings=true' : ''}`); break;
             case "series": data = currentGenre
-                ? await fetchJSON(`${MOVIES}/discover?type=tv&genreId=${currentGenre}&page=${currentPage}`)
-                : await fetchJSON(`${MOVIES}/popular?type=tv&page=${currentPage}`); break;
-            case "toprated": data = await fetchJSON(`${MOVIES}/toprated?type=movie&page=${currentPage}`); break;
+                ? await fetchJSON(`${MOVIES}/discover?type=tv&genreId=${currentGenre}&page=${currentPage}${includeContentRatings ? '&includeContentRatings=true' : ''}`)
+                : await fetchJSON(`${MOVIES}/popular?type=tv&page=${currentPage}${includeContentRatings ? '&includeContentRatings=true' : ''}`); break;
+            case "toprated": data = await fetchJSON(`${MOVIES}/toprated?type=movie&page=${currentPage}${includeContentRatings ? '&includeContentRatings=true' : ''}`); break;
             case "myratings":
+                if (!currentUser) {
+                    showGridEmpty("Sign in to see your personal rating history.");
+                    document.getElementById('loadMoreWrap').classList.remove('show');
+                    showAuthScreen("login", "Sign in to open your personal ratings.");
+                    return;
+                }
+
                 await refreshRatingsState();
                 renderMyRatings(ratingsList); return;
         }
@@ -124,7 +338,12 @@ async function loadView(view, append = false) {
             allItems = [...allItems, ...results];
         }
 
-        renderGrid(append ? results : getFilteredItems(), append);
+        const hasActiveFilters = filterMinRating > 0
+            || filterMaxRating < 10
+            || filterGenreIds.length > 0
+            || Boolean(filterAgeRating);
+
+        renderGrid(append && !hasActiveFilters ? results : getFilteredItems(), append && !hasActiveFilters);
         updateLoadMore();
         document.getElementById('resultCount').textContent =
             data?.total_results ? `${data.total_results.toLocaleString()} titles` : "";
@@ -140,12 +359,36 @@ function getFilteredItems() {
     return allItems.filter(item => {
         const score = item.vote_average || 0;
         if (score < filterMinRating || score > filterMaxRating) return false;
+        if (filterAgeRating) {
+            const age = item.content_rating_age ?? item.contentRatingAge;
+            if (age !== ageRatingToValue(filterAgeRating)) return false;
+        }
         if (filterGenreIds.length > 0) {
             const ig = item.genre_ids || [];
             if (!filterGenreIds.some(g => ig.includes(g))) return false;
         }
         return true;
     });
+}
+
+function shouldIncludeContentRatings() {
+    return Boolean(filterAgeRating);
+}
+
+function hasLoadedContentRatings() {
+    return allItems.length > 0 && allItems.every(item =>
+        Object.prototype.hasOwnProperty.call(item, 'content_rating_age')
+        || Object.prototype.hasOwnProperty.call(item, 'contentRatingAge'));
+}
+
+function ageRatingToValue(label) {
+    switch (String(label || "").toLowerCase()) {
+        case "family": return 0;
+        case "13+": return 13;
+        case "16+": return 16;
+        case "18+": return 18;
+        default: return null;
+    }
 }
 
 function renderGrid(items, append = false) {
@@ -295,6 +538,10 @@ function toggleAdvGenre(id, btn) {
     else filterGenreIds.push(id);
 }
 
+function updateAgeFilter() {
+    filterAgeRating = document.getElementById('ageRatingSelect').value;
+}
+
 function updateRatingFilter() {
     filterMinRating = parseFloat(document.getElementById('ratingMinRange').value);
     filterMaxRating = parseFloat(document.getElementById('ratingMaxRange').value);
@@ -303,13 +550,30 @@ function updateRatingFilter() {
     document.getElementById('ratingMax').textContent = filterMaxRating;
 }
 
-function applyFilters() { renderGrid(getFilteredItems()); toggleAdvancedFilter(); }
+function applyFilters() {
+    const needsReload = ["trending", "movies", "series", "toprated"].includes(currentView)
+        && (filterAgeRating !== appliedAgeRating || (filterAgeRating && !hasLoadedContentRatings()));
+
+    appliedAgeRating = filterAgeRating;
+
+    if (needsReload) {
+        currentPage = 1;
+        allItems = [];
+        loadView(currentView);
+    } else {
+        renderGrid(getFilteredItems());
+    }
+
+    toggleAdvancedFilter();
+}
+
 function clearFilters() {
-    filterMinRating = 0; filterMaxRating = 10; filterGenreIds = [];
+    filterMinRating = 0; filterMaxRating = 10; filterGenreIds = []; filterAgeRating = "";
     document.getElementById('ratingMinRange').value = 0;
     document.getElementById('ratingMaxRange').value = 10;
     document.getElementById('ratingMin').textContent = 0;
     document.getElementById('ratingMax').textContent = 10;
+    document.getElementById('ageRatingSelect').value = "";
     document.querySelectorAll('.adv-genre-chip').forEach(c => c.classList.remove('selected'));
 }
 
@@ -396,6 +660,11 @@ function setupDetailsTabs() {
 }
 
 function openModal(item) {
+    if (!currentUser) {
+        showAuthScreen("login", "Sign in or create an account to rate titles.");
+        return;
+    }
+
     currentItem = normalizeItem(item);
     if (!currentItem?.id) return;
 
@@ -630,6 +899,11 @@ function updateStars(value) {
 
 // ── SUBMIT RATING ────────────────────────────────────────────────
 async function submitRating() {
+    if (!currentUser) {
+        handleSignedOut("Sign in again to save your ratings.");
+        return;
+    }
+
     if (!currentItem || selectedScore === 0) return;
 
     const btn = document.getElementById('submitRating');
@@ -644,7 +918,16 @@ async function submitRating() {
     };
 
     try {
-        const res = await fetch(RATINGS, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
+        const res = await fetch(RATINGS, withCredentials({
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(payload)
+        }));
+        if (res.status === 401) {
+            handleSignedOut("Your session ended. Please sign in again.");
+            return;
+        }
+
         if (res.ok) {
             closeModal();
             await refreshRatingsState(true);
@@ -747,11 +1030,23 @@ function setupHamburger() {
 
 // ── RATINGS ──────────────────────────────────────────────────────
 async function refreshRatingsState(shouldRefreshUi = false) {
+    if (!currentUser) {
+        ratingsList = [];
+        ratingsMap = new Map();
+        if (shouldRefreshUi) refreshVisibleRatedState();
+        return;
+    }
+
     try {
         const ratings = await fetchJSON(RATINGS);
         ratingsList = Array.isArray(ratings) ? ratings : [];
         ratingsMap = new Map(ratingsList.map(rating => [buildRatingKey(rating.tmdbId, rating.mediaType), rating]));
     } catch (err) {
+        if (err?.response?.status === 401) {
+            handleSignedOut("Your session ended. Please sign in again.");
+            return;
+        }
+
         console.error("Ratings could not be loaded:", err);
         ratingsList = [];
         ratingsMap = new Map();
@@ -783,9 +1078,31 @@ function buildRatingKey(tmdbId, mediaType) {
 }
 
 // ── HELPERS ──────────────────────────────────────────────────────
+function resolveApiBase() {
+    const { protocol, hostname, port, origin } = window.location;
+    const isHttpApp = protocol === "http:" || protocol === "https:";
+    const isLocalHost = hostname === "localhost" || hostname === "127.0.0.1";
+    const isBackendPort = port === "5128" || port === "7025";
+
+    if (isHttpApp && (!isLocalHost || isBackendPort)) {
+        return `${origin}/api`;
+    }
+
+    return "http://localhost:5128/api";
+}
+
+function withCredentials(options = {}) {
+    return { ...options, credentials: options.credentials || "include" };
+}
+
 async function fetchJSON(url, options) {
-    const res = await fetch(url, options);
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const res = await fetch(url, withCredentials(options));
+    if (!res.ok) {
+        const error = new Error(`HTTP ${res.status}`);
+        error.response = res;
+        throw error;
+    }
+
     return res.json();
 }
 function showGridLoading() {
@@ -834,6 +1151,8 @@ function normalizeItem(item) {
         release_date: item.release_date ?? item.releaseDate ?? null,
         first_air_date: item.first_air_date ?? item.firstAirDate ?? null,
         genre_ids: item.genre_ids ?? item.genreIds ?? [],
+        content_rating: item.content_rating ?? item.contentRating ?? null,
+        content_rating_age: item.content_rating_age ?? item.contentRatingAge ?? null,
         media_type: getItemMediaType(item)
     };
 }
